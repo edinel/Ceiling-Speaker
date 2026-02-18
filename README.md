@@ -73,7 +73,7 @@ GPIO14           →  GND             Software ground (pulled low by code)
 Or GND           →  GND             Ground (GPIO14 software ground is sufficient)
 ```
 
-### *⚠️ **Important:** On the ESP32S3 board, bridge the VIN/VOUT solder pads if they are not already connected. This lets the board use 5V power directly.*
+### _⚠️ **Important:** On the ESP32S3 board, bridge the VIN/VOUT solder pads if they are not already connected. This lets the board use 5V power directly._
 
 ### Step 3 — Check the result
 
@@ -238,7 +238,7 @@ A 4MB flash variant is also supported (`squeezeamp-4m` PlatformIO environment).
 | LCK    | Word select — toggles at 44.1 kHz     |
 | DIN    | Serial audio data (16-bit stereo)     |
 
-MCLK is not used; the PCM5102A generates it internally.
+MCLK is not used for PCM5102A as generates it internally. It is, however, connected to pin 8 by default: this is useful in case you want to wire up some other kind of signal converter, like WM8805 I2S to SPDIF converter.
 
 ### Protocol Stack
 
@@ -291,15 +291,15 @@ MCLK is not used; the PCM5102A generates it internally.
 
 ### Key Components
 
-| Module             | Location               | Purpose                              |
-| ------------------ | ---------------------- | ------------------------------------ |
-| **RTSP Server**    | `main/rtsp/`           | Handles AirPlay control messages     |
-| **HAP Pairing**    | `main/hap/`            | Cryptographic device pairing         |
-| **Audio Pipeline** | `main/audio/`          | Decoding, buffering, timing          |
-| **PTP Clock**      | `main/network/`        | Synchronization with source          |
-| **Web Server**     | `main/network/`        | Configuration interface              |
-| **DAC Abstraction**| `components/dac/`      | Abstract DAC API (Kconfig-selected)  |
-| **Board Support**  | `components/boards/`   | Per-board HAL (GPIOs, init, events)  |
+| Module              | Location             | Purpose                             |
+| ------------------- | -------------------- | ----------------------------------- |
+| **RTSP Server**     | `main/rtsp/`         | Handles AirPlay control messages    |
+| **HAP Pairing**     | `main/hap/`          | Cryptographic device pairing        |
+| **Audio Pipeline**  | `main/audio/`        | Decoding, buffering, timing         |
+| **PTP Clock**       | `main/network/`      | Synchronization with source         |
+| **Web Server**      | `main/network/`      | Configuration interface             |
+| **DAC Abstraction** | `components/dac/`    | Abstract DAC API (Kconfig-selected) |
+| **Board Support**   | `components/boards/` | Per-board HAL (GPIOs, init, events) |
 
 ### Project Structure
 
