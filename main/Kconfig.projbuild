@@ -148,6 +148,8 @@ menu "Airplay ESP Configuration"
                     bool "SH1106 (128x64)"
                 config DISPLAY_DRIVER_SSD1309
                     bool "SSD1309 (128x64)"
+                config DISPLAY_DRIVER_SH1107
+                    bool "SH1107 (128x128)"
             endchoice
 
             choice DISPLAY_HEIGHT
@@ -161,7 +163,7 @@ menu "Airplay ESP Configuration"
                     bool "64 pixels (128x64)"
                 config DISPLAY_HEIGHT_32
                     bool "32 pixels (128x32)"
-                    depends on !DISPLAY_DRIVER_SSD1309
+                    depends on !DISPLAY_DRIVER_SSD1309 && !DISPLAY_DRIVER_SH1107
             endchoice
 
             choice DISPLAY_BUS
