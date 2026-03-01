@@ -226,7 +226,7 @@ static uint8_t tas58xx_detect(i2c_master_bus_handle_t bus) {
 static void tas58xx_dump_status(const char *context) {
   uint8_t val = 0;
 
-  ESP_LOGI(TAG, "--- %s: TAS5825M status dump ---", context);
+  ESP_LOGD(TAG, "--- %s: TAS5825M status dump ---", context);
 
   if (tas58xx_read_reg(REG_DEVICE_CTRL2, &val) == ESP_OK) {
     const char *state_str;
@@ -247,7 +247,7 @@ static void tas58xx_dump_status(const char *context) {
       state_str = "UNKNOWN";
       break;
     }
-    ESP_LOGI(TAG, "  DEVICE_CTRL2=0x%02X  state=%s  mute=%s  dsp=%s", val,
+    ESP_LOGD(TAG, "  DEVICE_CTRL2=0x%02X  state=%s  mute=%s  dsp=%s", val,
              state_str, (val & CTRL2_MUTE) ? "YES" : "no",
              (val & CTRL2_DIS_DSP) ? "DISABLED" : "enabled");
   }
@@ -271,7 +271,7 @@ static void tas58xx_dump_status(const char *context) {
       ps_str = "UNKNOWN";
       break;
     }
-    ESP_LOGI(TAG, "  POWER_STATE=0x%02X (%s)", val, ps_str);
+    ESP_LOGD(TAG, "  POWER_STATE=0x%02X (%s)", val, ps_str);
   }
 
   if (tas58xx_read_reg(REG_SAP_CTRL1, &val) == ESP_OK) {
@@ -294,23 +294,23 @@ static void tas58xx_dump_status(const char *context) {
       break;
     }
     int wlen = 16 + ((val >> 0) & 0x03) * 8; // 00=16, 01=20, 10=24, 11=32
-    ESP_LOGI(TAG, "  SAP_CTRL1=0x%02X  format=%s  word_len=%d-bit", val,
+    ESP_LOGD(TAG, "  SAP_CTRL1=0x%02X  format=%s  word_len=%d-bit", val,
              fmt_str, wlen);
   }
 
   if (tas58xx_read_reg(REG_DIG_VOL, &val) == ESP_OK) {
     float db = (0x30 - (int)val) * 0.5f;
-    ESP_LOGI(TAG, "  DIG_VOL=0x%02X (%.1f dB%s)", val, db,
+    ESP_LOGD(TAG, "  DIG_VOL=0x%02X (%.1f dB%s)", val, db,
              val == DIG_VOL_MUTE ? " MUTED" : "");
   }
 
   if (tas58xx_read_reg(REG_AGAIN, &val) == ESP_OK) {
     float again_db = -(val & 0x1F) * 0.5f;
-    ESP_LOGI(TAG, "  AGAIN=0x%02X (%.1f dB)", val, again_db);
+    ESP_LOGD(TAG, "  AGAIN=0x%02X (%.1f dB)", val, again_db);
   }
 
   if (tas58xx_read_reg(REG_AUTO_MUTE_CTRL, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "  AUTO_MUTE_CTRL=0x%02X", val);
+    ESP_LOGD(TAG, "  AUTO_MUTE_CTRL=0x%02X", val);
   }
 
   uint8_t chan_fault = 0, global1 = 0, global2 = 0, warning = 0;
@@ -323,17 +323,17 @@ static void tas58xx_dump_status(const char *context) {
              "  FAULTS: chan=0x%02X global1=0x%02X global2=0x%02X warn=0x%02X",
              chan_fault, global1, global2, warning);
   } else {
-    ESP_LOGI(TAG, "  FAULTS: none");
+    ESP_LOGD(TAG, "  FAULTS: none");
   }
 
   if (tas58xx_read_reg(REG_DSP_PGM_MODE, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "  DSP_PGM_MODE=0x%02X", val);
+    ESP_LOGD(TAG, "  DSP_PGM_MODE=0x%02X", val);
   }
   if (tas58xx_read_reg(REG_DSP_CTRL, &val) == ESP_OK) {
-    ESP_LOGI(TAG, "  DSP_CTRL=0x%02X", val);
+    ESP_LOGD(TAG, "  DSP_CTRL=0x%02X", val);
   }
 
-  ESP_LOGI(TAG, "--- end status dump ---");
+  ESP_LOGD(TAG, "--- end status dump ---");
 }
 
 static esp_err_t tas58xx_init(void) {
@@ -455,6 +455,7 @@ static void tas58xx_set_power_mode(dac_power_mode_t mode) {
     break;
   default:
     ESP_LOGW(TAG, "Unhandled power mode %d", mode);
+    REG_UNLOCK();
     return;
   }
 
@@ -705,8 +706,6 @@ static const float eq_center_freq[TAS58XX_EQ_BANDS] = {
     0.8f, 0.8f, 0.7f, 0.7f, 0.6f, 0.6f, 0.5f,
 }; */
 
-#define EQ_SAMPLE_RATE 48000.0f
-
 /* 1.0 in 5.27 fixed-point (1 sign + 4 int + 27 frac = 32-bit) */
 #define FP_ONE 0x08000000
 
@@ -734,75 +733,6 @@ static inline esp_err_t select_default_page(void) {
   if (err != ESP_OK)
     return err;
   return tas58xx_write_reg(REG_PAGE_SEL, 0x00);
-}
-
-/**
- * Compute peaking-EQ biquad coefficients (Audio EQ Cookbook).
- *
- * TI DSP biquad structure (SLAA786A Table 6):
- *   H(z) = (B0 + 2·B1·z⁻¹ + B2·z⁻²) / (1 − 2·A1·z⁻¹ − A2·z⁻²)
- *
- * Stored coefficient normalization:
- *   B0_DSP =  b0 / a0
- *   B1_DSP =  b1 / (a0 × 2)
- *   B2_DSP =  b2 / a0
- *   A1_DSP = −a1 / (a0 × 2)
- *   A2_DSP = −a2 / a0
- *
- * The ÷2 on B1/A1 keeps |B1|,|A1| ≤ 1.0 (since b1,a1 contain −2cos(w0)
- * which ranges ±2), preventing 5.27 overflow.  The DSP multiplies by 2
- * internally.
- *
- * Coefficients are returned as 32-bit signed 5.27 fixed-point.
- */
-static void __attribute__((unused)) calc_peaking_biquad(float fc, float gain_db,
-                                                        float q, float fs,
-                                                        int32_t coeff[5]) {
-  /* Flat / bypass shortcut */
-  if (fabsf(gain_db) < 0.05f) {
-    coeff[0] = FP_ONE; /* B0 = 1.0 */
-    coeff[1] = 0;      /* B1 = 0   */
-    coeff[2] = 0;      /* B2 = 0   */
-    coeff[3] = 0;      /* A1 = 0   */
-    coeff[4] = 0;      /* A2 = 0   */
-    return;
-  }
-
-  float w0 = 2.0f * (float)M_PI * fc / fs;
-  float A = powf(10.0f, gain_db / 40.0f);
-  float sinw = sinf(w0);
-  float cosw = cosf(w0);
-  float alpha = sinw / (2.0f * q);
-
-  float b0 = 1.0f + alpha * A;
-  float b1 = -2.0f * cosw;
-  float b2 = 1.0f - alpha * A;
-  float a0 = 1.0f + alpha / A;
-  float a1_txt = -2.0f * cosw;     /* textbook a1 */
-  float a2_txt = 1.0f - alpha / A; /* textbook a2 */
-
-  float inv_a0 = 1.0f / a0;
-
-  /* TI DSP coefficient normalization (Table 6, SLAA786A) */
-  float B0_dsp = b0 * inv_a0;             /*  b0 / a0         */
-  float B1_dsp = b1 * inv_a0 * 0.5f;      /*  b1 / (a0 × 2)   */
-  float B2_dsp = b2 * inv_a0;             /*  b2 / a0         */
-  float A1_dsp = -a1_txt * inv_a0 * 0.5f; /* −a1 / (a0 × 2)   */
-  float A2_dsp = -a2_txt * inv_a0;        /* −a2 / a0         */
-
-  /* Convert to 5.27 fixed-point */
-  const float scale = (float)(1 << 27);
-  coeff[0] = (int32_t)roundf(B0_dsp * scale);
-  coeff[1] = (int32_t)roundf(B1_dsp * scale);
-  coeff[2] = (int32_t)roundf(B2_dsp * scale);
-  coeff[3] = (int32_t)roundf(A1_dsp * scale);
-  coeff[4] = (int32_t)roundf(A2_dsp * scale);
-
-  ESP_LOGI(TAG,
-           "EQ: calc %.0fHz %+.1fdB -> B0=0x%08lX B1=0x%08lX B2=0x%08lX "
-           "A1=0x%08lX A2=0x%08lX",
-           fc, gain_db, (long)coeff[0], (long)coeff[1], (long)coeff[2],
-           (long)coeff[3], (long)coeff[4]);
 }
 
 /**
@@ -905,7 +835,7 @@ static esp_err_t write_dsp_coeff32(uint8_t page, uint8_t reg, int32_t val) {
 static esp_err_t write_dsp_signal_path_defaults(void) {
   esp_err_t err;
 
-  ESP_LOGI(TAG, "DSP: writing signal-path defaults (Books 0x8C + 0xAA)");
+  ESP_LOGD(TAG, "DSP: writing signal-path defaults (Books 0x8C + 0xAA)");
 
   /*
    * ── Book 0x8C: control coefficients ──
@@ -1113,7 +1043,7 @@ static esp_err_t write_dsp_signal_path_defaults(void) {
   err = select_default_page();
 
   s_dsp_defaults_written = true;
-  ESP_LOGI(TAG, "DSP: signal-path defaults written (Book 0x8C + 0xAA)");
+  ESP_LOGD(TAG, "DSP: signal-path defaults written (Book 0x8C + 0xAA)");
   return err;
 }
 
@@ -1149,7 +1079,7 @@ static esp_err_t ensure_custom_coeffs_mode(void) {
     }
 
     /* Now safe to clear USE_DEFAULT_COEFFS */
-    ESP_LOGI(TAG, "DSP: clearing USE_DEFAULT_COEFFS");
+    ESP_LOGD(TAG, "DSP: clearing USE_DEFAULT_COEFFS");
     err = tas58xx_write_reg(REG_DSP_CTRL, dsp_ctrl & ~0x01);
 
     /* Verify the bit was actually cleared */
@@ -1158,7 +1088,7 @@ static esp_err_t ensure_custom_coeffs_mode(void) {
       tas58xx_read_reg(REG_DSP_CTRL, &verify);
       uint8_t pgm = 0xFF;
       tas58xx_read_reg(REG_DSP_PGM_MODE, &pgm);
-      ESP_LOGI(TAG,
+      ESP_LOGD(TAG,
                "DSP: post-clear DSP_CTRL=0x%02X (expect 0x00) "
                "DSP_PGM_MODE=0x%02X (expect 0x01)",
                verify, pgm);
@@ -1178,75 +1108,6 @@ static esp_err_t ensure_custom_coeffs_mode(void) {
       tas58xx_write_reg(REG_DEVICE_CTRL2, saved_ctrl2);
     }
   }
-  return err;
-}
-
-/**
- * Program one biquad on both channels.
- * Enters Book 0xAA, writes CH1 then CH2, and returns to Book 0 / Page 0.
- * Also ensures DSP is in custom-coefficients mode (signal path defaults
- * are written first if needed).
- */
-static esp_err_t __attribute__((unused))
-program_biquad(int bq, const int32_t coeff[5]) {
-  uint8_t page, reg;
-  esp_err_t err;
-
-  /* Ensure DSP has all signal-path defaults before using custom coefficients */
-  err = ensure_custom_coeffs_mode();
-  if (err != ESP_OK)
-    return err;
-
-  /* Enter coefficient book */
-  err = select_book_page(BQ_COEFF_BOOK, 0x00);
-  if (err != ESP_OK)
-    goto out;
-
-  /* Channel 1 (Left) */
-  page = eq_left_addr[bq].page;
-  reg = eq_left_addr[bq].sub_addr;
-  err = write_biquad_coeff(page, reg, coeff);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "EQ: CH1 BQ%d write failed: %s", bq, esp_err_to_name(err));
-    goto out;
-  }
-
-  /* Channel 2 (Right) */
-  page = eq_right_addr[bq].page;
-  reg = eq_right_addr[bq].sub_addr;
-  err = write_biquad_coeff(page, reg, coeff);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "EQ: CH2 BQ%d write failed: %s", bq, esp_err_to_name(err));
-    goto out;
-  }
-
-  /* Read-back verification on CH1 to confirm coefficients stuck */
-  {
-    page = eq_left_addr[bq].page;
-    reg = eq_left_addr[bq].sub_addr;
-    int32_t readback[5];
-    if (read_biquad_coeff(page, reg, readback) == ESP_OK) {
-      bool match = true;
-      for (int i = 0; i < 5; i++) {
-        if (readback[i] != coeff[i]) {
-          match = false;
-          break;
-        }
-      }
-      if (!match) {
-        ESP_LOGW(TAG,
-                 "EQ: BQ%d readback MISMATCH! wrote B0=0x%08lX read "
-                 "B0=0x%08lX",
-                 bq, (long)coeff[0], (long)readback[0]);
-      } else {
-        ESP_LOGD(TAG, "EQ: BQ%d readback OK (B0=0x%08lX)", bq,
-                 (long)readback[0]);
-      }
-    }
-  }
-
-out:
-  select_default_page();
   return err;
 }
 
@@ -1322,7 +1183,7 @@ static esp_err_t write_eq_mode(bool enable) {
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "EQ: mode write failed: %s", esp_err_to_name(err));
   } else {
-    ESP_LOGI(TAG, "EQ: %s", enable ? "ENABLED" : "BYPASSED");
+    ESP_LOGD(TAG, "EQ: %s", enable ? "ENABLED" : "BYPASSED");
   }
 
   select_default_page();
@@ -1360,7 +1221,7 @@ esp_err_t tas58xx_eq_set_band(int band, float gain_db) {
     gain_int = (int)TAS58XX_EQ_MIN_GAIN_DB;
 
   int idx = gain_int + EQ_GAIN_OFFSET;
-  ESP_LOGI(TAG, "EQ: band %d (%.0f Hz) -> %+d dB (table idx %d)", band,
+  ESP_LOGD(TAG, "EQ: band %d (%.0f Hz) -> %+d dB (table idx %d)", band,
            eq_center_freq[band], gain_int, idx);
 
   REG_LOCK();
@@ -1405,7 +1266,7 @@ esp_err_t tas58xx_eq_set_all(const float gains_db[TAS58XX_EQ_BANDS]) {
 }
 
 esp_err_t tas58xx_eq_flat(void) {
-  ESP_LOGI(TAG, "EQ: resetting all bands to flat");
+  ESP_LOGD(TAG, "EQ: resetting all bands to flat");
 
   /* Index for 0 dB gain = unity passthrough */
   const int flat_idx = EQ_GAIN_OFFSET;
@@ -1446,7 +1307,7 @@ float tas58xx_eq_get_center_freq(int band) {
 }
 
 esp_err_t tas58xx_eq_verify_addresses(void) {
-  ESP_LOGI(TAG, "EQ: verifying biquad addresses (Book 0x%02X, 5.27)...",
+  ESP_LOGD(TAG, "EQ: verifying biquad addresses (Book 0x%02X, 5.27)...",
            BQ_COEFF_BOOK);
 
   REG_LOCK();
@@ -1458,7 +1319,7 @@ esp_err_t tas58xx_eq_verify_addresses(void) {
     uint8_t pgm_mode = 0, dsp_ctrl = 0;
     tas58xx_read_reg(REG_DSP_PGM_MODE, &pgm_mode);
     tas58xx_read_reg(REG_DSP_CTRL, &dsp_ctrl);
-    ESP_LOGI(TAG,
+    ESP_LOGD(TAG,
              "EQ: DSP_PGM_MODE=0x%02X DSP_CTRL=0x%02X "
              "(USE_DEFAULT_COEFFS=%s)",
              pgm_mode, dsp_ctrl, (dsp_ctrl & 0x01) ? "YES" : "no");
@@ -1509,7 +1370,7 @@ esp_err_t tas58xx_eq_verify_addresses(void) {
       if (is_flat_bq) {
         (*flat)++;
       } else {
-        ESP_LOGI(TAG,
+        ESP_LOGD(TAG,
                  "  %s BQ%02d NON-FLAT page=0x%02X:0x%02X "
                  "B0=0x%08lX B1=0x%08lX B2=0x%08lX A1=0x%08lX A2=0x%08lX",
                  ch_str, bq, page, reg, (long)orig[0], (long)orig[1],
@@ -1556,18 +1417,18 @@ esp_err_t tas58xx_eq_verify_addresses(void) {
 
   select_default_page();
 
-  ESP_LOGI(TAG,
+  ESP_LOGD(TAG,
            "EQ verify: CH1 %d/%d writable (%d flat), "
            "CH2 %d/%d writable (%d flat)",
            ch1_ok, TAS58XX_EQ_BANDS, ch1_flat, ch2_ok, TAS58XX_EQ_BANDS,
            ch2_flat);
 
   /* Log EQ address ranges for reference */
-  ESP_LOGI(TAG, "  CH1: BQ01=page 0x%02X:0x%02X .. BQ15=page 0x%02X:0x%02X",
+  ESP_LOGD(TAG, "  CH1: BQ01=page 0x%02X:0x%02X .. BQ15=page 0x%02X:0x%02X",
            eq_left_addr[0].page, eq_left_addr[0].sub_addr,
            eq_left_addr[TAS58XX_EQ_BANDS - 1].page,
            eq_left_addr[TAS58XX_EQ_BANDS - 1].sub_addr);
-  ESP_LOGI(TAG, "  CH2: BQ01=page 0x%02X:0x%02X .. BQ15=page 0x%02X:0x%02X",
+  ESP_LOGD(TAG, "  CH2: BQ01=page 0x%02X:0x%02X .. BQ15=page 0x%02X:0x%02X",
            eq_right_addr[0].page, eq_right_addr[0].sub_addr,
            eq_right_addr[TAS58XX_EQ_BANDS - 1].page,
            eq_right_addr[TAS58XX_EQ_BANDS - 1].sub_addr);

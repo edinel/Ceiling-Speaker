@@ -538,8 +538,8 @@ static const char *HTML_EQ_PAGE =
     "<div class='card'><h2>EQ Bands</h2>\n"
     "<div style='display:flex'>\n"
     "<div class='eq-scale'>"
-    "<span>+12</span><span>+6</span><span>0</span>"
-    "<span>-6</span><span>-12</span></div>\n"
+    "<span>+15</span><span>+7</span><span>0</span>"
+    "<span>-7</span><span>-15</span></div>\n"
     "<div class='eq-container' id='eq-sliders'></div>\n"
     "</div>\n"
     "<div class='eq-actions'>\n"
@@ -698,10 +698,10 @@ static esp_err_t eq_post_handler(httpd_req_t *req) {
       cJSON *item = cJSON_GetArrayItem(gains_arr, i);
       gains[i] = cJSON_IsNumber(item) ? (float)item->valuedouble : 0.0f;
       /* Clamp */
-      if (gains[i] > 12.0f)
-        gains[i] = 12.0f;
-      if (gains[i] < -12.0f)
-        gains[i] = -12.0f;
+      if (gains[i] > 15.0f)
+        gains[i] = 15.0f;
+      if (gains[i] < -15.0f)
+        gains[i] = -15.0f;
     }
 
     /* Emit event — listeners (settings + DAC) will handle it */
