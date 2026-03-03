@@ -26,9 +26,9 @@
 #define MAX_CONSECUTIVE_EARLY 750
 // MAX_CONSECUTIVE_LATE: number of consecutive individually-late frames before
 // we conclude the whole buffer is stale and do a bulk flush.  At ~8 ms/frame
-// this is ~160 ms — enough to absorb brief jitter but fast enough to recover
-// from the post-skip case where the anchor network_time has already passed.
-#define MAX_CONSECUTIVE_LATE 20
+// this is ~24 ms — just enough to distinguish a genuine stale-buffer from a
+// one-off WiFi jitter spike, without the 20-frame drain+log storm.
+#define MAX_CONSECUTIVE_LATE 3
 
 static const char *TAG = "audio_time";
 // consecutive_early_frames is now a field in audio_timing_t so it resets
@@ -345,7 +345,11 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       }
     }
 
-    // Handle early/late frames based on anchor timing
+    // Handle early/late frames based on anchor timing.
+    // timing_bypassed: set when post_flush lets an early frame through; keeps
+    // post_flush alive so we don't re-engage normal timing after just one
+    // bypassed frame (the phone's entire pre-buffer window must drain first).
+    bool timing_bypassed = false;
     if (timing->anchor_valid && format->sample_rate > 0) {
       int64_t early_us = 0;
       if (compute_early_us(timing, format, hdr->rtp_timestamp, sync_mode,
@@ -360,6 +364,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
             // unconditionally after a flush and let normal timing re-engage
             // once the anchor reports on-time (early_us < TIMING_THRESHOLD_US).
             timing->consecutive_early_frames = 0;
+            timing_bypassed = true; // post_flush must survive this frame
             // Fall through to play the frame.
           } else {
             timing->consecutive_early_frames++;
@@ -404,8 +409,14 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
           timing->consecutive_early_frames = 0;
           timing->consecutive_late_frames++;
 
+          // post_flush: the phone's new anchor after a seek often places the
+          // first frames marginally late.  Suppress the consecutive-late bulk
+          // flush so those frames play through instead of triggering a
+          // cascading re-flush loop.  The >2 s single-frame check is still
+          // allowed: that catches genuinely stale data, not seek-edge jitter.
           if (-early_us > BULK_FLUSH_LATE_THRESHOLD_US ||
-              timing->consecutive_late_frames > MAX_CONSECUTIVE_LATE) {
+              (!timing->post_flush &&
+               timing->consecutive_late_frames > MAX_CONSECUTIVE_LATE)) {
             // Bulk flush the stale buffer.  Two triggers:
             //  1. A single frame is massively late (> 2 s): e.g. after resume
             //     from a long pause where the phone advanced the anchor past
@@ -435,9 +446,13 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
             return 0;
           }
 
-          // Too late but within normal range: drop this single frame
-          ESP_LOGW(TAG, "Dropping late frame: %lld ms (consecutive=%d)",
-                   -early_us / 1000LL, timing->consecutive_late_frames);
+          // Too late but within normal range: drop this single frame.
+          // Rate-limit the log — spamming LOGW on every frame adds
+          // UART-blocking latency that makes the drain period even longer.
+          if (timing->consecutive_late_frames == 1) {
+            ESP_LOGW(TAG, "Dropping late frame(s): %lld ms",
+                     -early_us / 1000LL);
+          }
           if (stats) {
             stats->late_frames++;
           }
@@ -452,11 +467,14 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       }
     }
 
-    // Frame is on time - reset both direction counters, and exit the
-    // post-seek bypass mode now that the anchor has caught up to real time.
+    // Frame is on time (or anchor-invalid) — reset counters.
+    // Only exit post_flush when we got here because the frame was genuinely
+    // on-time, not because post_flush bypassed the early check.  This keeps
+    // the bypass active for the entire pre-buffer window after a seek so none
+    // of those frames re-engage normal timing prematurely.
     timing->consecutive_early_frames = 0;
     timing->consecutive_late_frames = 0;
-    if (timing->post_flush) {
+    if (timing->post_flush && !timing_bypassed) {
       ESP_LOGI(TAG, "post_flush: anchor on-time, resuming normal timing");
       timing->post_flush = false;
     }
