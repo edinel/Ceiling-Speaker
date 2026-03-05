@@ -7,8 +7,8 @@
 
 static const char *TAG = "settings";
 
-#define NVS_NAMESPACE         "airplay"
-#define NVS_KEY_VOLUME        "volume_db"
+#define NVS_NAMESPACE  "airplay"
+#define NVS_KEY_VOLUME "volume_db"
 #ifdef CONFIG_BT_A2DP_ENABLE
 #define NVS_KEY_BT_VOLUME "bt_vol"
 #endif
