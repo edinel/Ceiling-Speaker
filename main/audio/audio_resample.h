@@ -29,8 +29,8 @@ bool audio_resample_init(uint32_t input_rate, uint32_t output_rate,
  * @param out_capacity Maximum output frames the buffer can hold
  * @return Number of output frames written
  */
-size_t audio_resample_process(const int16_t *in, size_t in_frames,
-                              int16_t *out, size_t out_capacity);
+size_t audio_resample_process(const int16_t *in, size_t in_frames, int16_t *out,
+                              size_t out_capacity);
 
 /**
  * @return true if resampling is active (rates differ)

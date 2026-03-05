@@ -82,9 +82,8 @@ static void playback_task(void *arg) {
       int16_t *play_buf = pcm;
       size_t play_samples = samples;
       if (audio_resample_is_active()) {
-        play_samples =
-            audio_resample_process(pcm, samples, resample_buf,
-                                   MAX_RESAMPLE_FRAMES);
+        play_samples = audio_resample_process(pcm, samples, resample_buf,
+                                              MAX_RESAMPLE_FRAMES);
         play_buf = resample_buf;
       }
       apply_volume(play_buf, play_samples * 2);
