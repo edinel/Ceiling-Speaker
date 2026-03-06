@@ -82,6 +82,7 @@ static void network_monitor_task(void *pvParameters) {
   bool had_network = ethernet_is_connected() || wifi_is_connected();
   bool dns_running = !had_network;
   bool wifi_started = wifi_is_connected() || !ethernet_is_connected();
+  bool had_eth = ethernet_is_connected();
 
   // Start captive portal DNS if no network yet
   if (dns_running) {
@@ -95,12 +96,23 @@ static void network_monitor_task(void *pvParameters) {
     bool wifi_up = wifi_is_connected();
     bool has_network = eth_up || wifi_up;
 
-    // If ethernet dropped and WiFi was never started, bring up WiFi now
-    if (!eth_up && !wifi_started) {
+    // Ethernet just came up — stop WiFi entirely
+    if (eth_up && !had_eth && wifi_started) {
+      ESP_LOGI(TAG, "Ethernet connected — stopping WiFi");
+      wifi_stop();
+      wifi_started = false;
+      wifi_up = false;
+    }
+
+    // Ethernet dropped — bring up WiFi (AP + STA)
+    if (!eth_up && had_eth) {
       ESP_LOGI(TAG, "Ethernet down — starting WiFi as fallback");
       wifi_init_apsta(NULL, NULL);
       wifi_started = true;
     }
+
+    had_eth = eth_up;
+    has_network = eth_up || wifi_is_connected();
 
     if (has_network == had_network) {
       continue;
