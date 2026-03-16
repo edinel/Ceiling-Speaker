@@ -71,6 +71,9 @@ jobs:
           - name: squeezeamp
             target: esp32
             sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.squeezeamp"
+          - name: squeezeamp-bt
+            target: esp32
+            sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.squeezeamp;sdkconfig.defaults.bt"
           - name: squeezeamp-4m
             target: esp32
             sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.squeezeamp-4m"
@@ -88,6 +91,7 @@ jobs:
           esp_idf_version: v5.5
           target: ${{ matrix.target }}
           command: >
+            rm -f "${{ matrix.name }}.sdkconfig" && idf.py reconfigure
             idf.py -DSDKCONFIG_DEFAULTS="${{ matrix.sdkconfig }}" build &&
             idf.py merge-bin -o airplay2-receiver-${{ matrix.name }}.bin -f raw
 
