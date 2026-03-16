@@ -91,7 +91,6 @@ jobs:
           esp_idf_version: v5.5
           target: ${{ matrix.target }}
           command: >
-            rm -f "${{ matrix.name }}.sdkconfig" && idf.py reconfigure
             idf.py -DSDKCONFIG_DEFAULTS="${{ matrix.sdkconfig }}" build &&
             idf.py merge-bin -o airplay2-receiver-${{ matrix.name }}.bin -f raw
 
