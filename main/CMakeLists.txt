@@ -71,6 +71,7 @@ set( DEPS
     esp_driver_ledc
     boards
     dac
+    dac_tas58xx
     display
 )
 
