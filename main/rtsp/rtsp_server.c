@@ -170,7 +170,7 @@ static void client_task(void *pvParameters) {
   if (getpeername(slot->socket, (struct sockaddr *)&peer_addr, &peer_len) ==
       0) {
     conn->client_ip = peer_addr.sin_addr.s_addr;
-    ESP_LOGI(TAG, "Client IP: %d.%d.%d.%d", conn->client_ip & 0xFF,
+    ESP_LOGI(TAG, "Client IP: %lu.%lu.%lu.%lu", conn->client_ip & 0xFF,
              (conn->client_ip >> 8) & 0xFF, (conn->client_ip >> 16) & 0xFF,
              (conn->client_ip >> 24) & 0xFF);
   }
