@@ -319,6 +319,12 @@ static void on_rtsp_event(rtsp_event_t event, const rtsp_event_data_t *data,
 
   case RTSP_EVENT_METADATA:
     if (data) {
+      // Detect a real track change so we know when position=0 is legitimate
+      // (start of a new track) vs. a spurious mid-song reset from AirPlay.
+      bool track_changed = data->metadata.title[0] &&
+                           strncmp(s_display.title, data->metadata.title,
+                                   METADATA_STRING_MAX) != 0;
+
       // Only overwrite text fields when the event actually carries them;
       // progress-only updates arrive with zeroed strings.
       if (data->metadata.title[0]) {
@@ -333,8 +339,14 @@ static void on_rtsp_event(rtsp_event_t event, const rtsp_event_data_t *data,
       if (data->metadata.duration_secs) {
         s_display.duration_secs = data->metadata.duration_secs;
       }
-      s_display.position_secs = data->metadata.position_secs;
-      s_display.sync_time_us = esp_timer_get_time();
+      // AirPlay occasionally emits position_secs=0 mid-song without a track
+      // change, which would reset the progress bar. Only accept 0 on an
+      // actual track change; otherwise ignore it and keep the current
+      // interpolated position.
+      if (data->metadata.position_secs != 0 || track_changed) {
+        s_display.position_secs = data->metadata.position_secs;
+        s_display.sync_time_us = esp_timer_get_time();
+      }
       s_display.dirty = true;
       scroll_restart();
     }
@@ -381,7 +393,7 @@ static void display_task(void *pvParameters) {
 // Initialization
 // ============================================================================
 
-void display_init(void) {
+void display_init(void *bus) {
 #if defined(CONFIG_DISPLAY_BUS_SPI)
   ESP_LOGI(
       TAG, "Initializing OLED display (SPI: CLK=%d MOSI=%d CS=%d DC=%d RST=%d)",
@@ -389,12 +401,17 @@ void display_init(void) {
       CONFIG_DISPLAY_SPI_DC, CONFIG_DISPLAY_SPI_RST);
 
   u8g2_esp32_hal_t hal = U8G2_ESP32_HAL_DEFAULT;
-  hal.bus.spi.clk = CONFIG_DISPLAY_SPI_CLK;
-  hal.bus.spi.mosi = CONFIG_DISPLAY_SPI_MOSI;
+  if (bus == NULL) {
+    hal.bus.spi.clk = CONFIG_DISPLAY_SPI_CLK;
+    hal.bus.spi.mosi = CONFIG_DISPLAY_SPI_MOSI;
+  }
   hal.bus.spi.cs = CONFIG_DISPLAY_SPI_CS;
   hal.dc = CONFIG_DISPLAY_SPI_DC;
   hal.reset = CONFIG_DISPLAY_SPI_RST;
   u8g2_esp32_hal_init(hal);
+  if (bus != NULL) {
+    u8g2_esp32_hal_set_spi_host((spi_host_device_t)(intptr_t)bus);
+  }
 
   // Setup u8g2 for the selected display driver and height (SPI)
 #if defined(CONFIG_DISPLAY_DRIVER_SH1106)
@@ -428,9 +445,14 @@ void display_init(void) {
 
   // Configure the ESP32 HAL for I2C
   u8g2_esp32_hal_t hal = U8G2_ESP32_HAL_DEFAULT;
-  hal.bus.i2c.sda = CONFIG_DISPLAY_I2C_SDA;
-  hal.bus.i2c.scl = CONFIG_DISPLAY_I2C_SCL;
+  if (bus == NULL) {
+    hal.bus.i2c.sda = CONFIG_DISPLAY_I2C_SDA;
+    hal.bus.i2c.scl = CONFIG_DISPLAY_I2C_SCL;
+  }
   u8g2_esp32_hal_init(hal);
+  if (bus != NULL) {
+    u8g2_esp32_hal_set_i2c_bus((i2c_master_bus_handle_t)bus);
+  }
 
   // Setup u8g2 for the selected display driver and height (I2C)
 #if defined(CONFIG_DISPLAY_DRIVER_SH1106)

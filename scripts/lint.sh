@@ -14,7 +14,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
-# Submodule paths to exclude
+# Submodule and vendored paths to exclude
 SUBMODULES="components/u8g2 components/u8g2-hal-esp-idf"
 
 export PATH="$(brew --prefix llvm)/bin:$PATH"
