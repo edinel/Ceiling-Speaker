@@ -26,13 +26,13 @@ static spi_host_device_t s_spi_host = SPI2_HOST;
 static bool s_spi_bus_external = false;
 
 #undef ESP_ERROR_CHECK
-#define ESP_ERROR_CHECK(x)                   \
-  do {                                       \
-    esp_err_t rc = (x);                      \
-    if (rc != ESP_OK) {                      \
-      ESP_LOGE("err", "esp_err_t = %d", rc); \
-      assert(0 && #x);                       \
-    }                                        \
+#define ESP_ERROR_CHECK(x)                                  \
+  do {                                                      \
+    esp_err_t rc = (x);                                     \
+    if (rc != ESP_OK) {                                     \
+      ESP_LOGW(TAG, #x " failed: %s", esp_err_to_name(rc)); \
+      return 0;                                             \
+    }                                                       \
   } while (0);
 
 /*
@@ -205,8 +205,16 @@ uint8_t u8g2_esp32_i2c_byte_cb(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int,
 
   case U8X8_MSG_BYTE_END_TRANSFER: {
     ESP_LOGD(TAG, "End I2C transfer.");
-    ESP_ERROR_CHECK(
-        i2c_master_transmit(dev_i2c, i2c_buffer, i2c_buf_idx, I2C_TIMEOUT_MS));
+    esp_err_t rc =
+        i2c_master_transmit(dev_i2c, i2c_buffer, i2c_buf_idx, I2C_TIMEOUT_MS);
+    if (rc != ESP_OK) {
+      ESP_LOGW(TAG, "I2C transmit failed: %s — resetting bus",
+               esp_err_to_name(rc));
+      i2c_master_bus_reset(bus_i2c);
+      // Remove and re-add the device so the next transfer starts clean
+      i2c_master_bus_rm_device(dev_i2c);
+      dev_i2c = NULL;
+    }
     break;
   }
   }
