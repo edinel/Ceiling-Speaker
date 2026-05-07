@@ -3,8 +3,9 @@
 #include "board_common.h"
 #include "sdkconfig.h"
 
-#define BOARD_NAME        "ESP32P4 Module DEV KIT"
-#define BOARD_DESCRIPTION "Waveshare ESP32P4 Module DEV KIT with external I2S DAC"
+#define BOARD_NAME "ESP32P4 Module DEV KIT"
+#define BOARD_DESCRIPTION \
+  "Waveshare ESP32P4 Module DEV KIT with external I2S DAC"
 
 // I2S configuration
 #define BOARD_I2S_BCK_GPIO CONFIG_I2S_BCK_IO
