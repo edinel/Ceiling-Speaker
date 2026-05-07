@@ -443,16 +443,53 @@ void display_init(void *bus) {
            CONFIG_DISPLAY_I2C_SDA, CONFIG_DISPLAY_I2C_SCL,
            CONFIG_DISPLAY_I2C_ADDR);
 
+  // Bus must be supplied by the board; display cannot init without one.
+  if (bus == NULL) {
+    ESP_LOGW(TAG, "No I2C bus supplied — display disabled");
+    return;
+  }
+  i2c_master_bus_handle_t i2c_bus = (i2c_master_bus_handle_t)bus;
+
+  // Probe for the display before attempting init. OLED controllers can take
+  // up to 100ms to boot after power-on, so retry a few times with delays.
+  bool display_found = false;
+  for (int attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      i2c_master_bus_reset(i2c_bus);
+    }
+    if (i2c_master_probe(i2c_bus, CONFIG_DISPLAY_I2C_ADDR, 100) == ESP_OK) {
+      display_found = true;
+      break;
+    }
+    ESP_LOGD(TAG, "Display probe attempt %d failed", attempt + 1);
+  }
+
+  if (!display_found) {
+    ESP_LOGW(
+        TAG,
+        "No OLED display at I2C addr 0x%02x after retries — display disabled",
+        CONFIG_DISPLAY_I2C_ADDR);
+    i2c_master_bus_reset(i2c_bus);
+    // Scan the bus so the caller can see what is actually present
+    ESP_LOGW(TAG, "Scanning I2C bus for devices...");
+    bool found_any = false;
+    for (uint8_t addr = 0x08; addr < 0x78; addr++) {
+      if (i2c_master_probe(i2c_bus, addr, 10) == ESP_OK) {
+        ESP_LOGW(TAG, "  found device at 0x%02x", addr);
+        found_any = true;
+      }
+    }
+    if (!found_any) {
+      ESP_LOGW(TAG, "  no devices found on I2C bus");
+    }
+    return;
+  }
+
   // Configure the ESP32 HAL for I2C
   u8g2_esp32_hal_t hal = U8G2_ESP32_HAL_DEFAULT;
-  if (bus == NULL) {
-    hal.bus.i2c.sda = CONFIG_DISPLAY_I2C_SDA;
-    hal.bus.i2c.scl = CONFIG_DISPLAY_I2C_SCL;
-  }
   u8g2_esp32_hal_init(hal);
-  if (bus != NULL) {
-    u8g2_esp32_hal_set_i2c_bus((i2c_master_bus_handle_t)bus);
-  }
+  u8g2_esp32_hal_set_i2c_bus(i2c_bus);
 
   // Setup u8g2 for the selected display driver and height (I2C)
 #if defined(CONFIG_DISPLAY_DRIVER_SH1106)
