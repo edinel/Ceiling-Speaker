@@ -49,7 +49,9 @@
 #include "freertos/task.h"
 #include "rtsp_events.h"
 #include "led.h"
+#include "soc/uart_pins.h"
 #include "soc/gpio_struct.h"
+#include "esp_rom_gpio.h"
 
 #define ISR_HANDLER_TASK_STACK_SIZE 4096
 #define ISR_HANDLER_TASK_PRIORITY   5
@@ -234,8 +236,26 @@ esp_err_t iot_board_init(void) {
     s_i2c_disp_bus_handle = s_i2c_dac_bus_handle;
     ESP_LOGI(TAG, "Display sharing DAC I2C bus");
   } else {
+    // UART0 owns GPIO1 (TX) and GPIO3 (RX) by default via the GPIO matrix.
+    // If the display I2C pins overlap, detach them from UART0 first so the
+    // I2C driver can claim them.  This ends serial console output on those
+    // pins.
+    if (CONFIG_DISPLAY_I2C_SDA == U0TXD_GPIO_NUM ||
+        CONFIG_DISPLAY_I2C_SDA == U0RXD_GPIO_NUM ||
+        CONFIG_DISPLAY_I2C_SCL == U0TXD_GPIO_NUM ||
+        CONFIG_DISPLAY_I2C_SCL == U0RXD_GPIO_NUM) {
+      ESP_LOGW(TAG,
+               "Display I2C pins (sda=%d, scl=%d) conflict with UART0 "
+               "— detaching serial console",
+               CONFIG_DISPLAY_I2C_SDA, CONFIG_DISPLAY_I2C_SCL);
+      // gpio_reset_pin only resets the IO_MUX; the UART0 signal remains
+      // routed through the GPIO matrix. esp_rom_gpio_pad_select_gpio clears
+      // both the IO_MUX and the GPIO matrix routing.
+      esp_rom_gpio_pad_select_gpio(CONFIG_DISPLAY_I2C_SDA);
+      esp_rom_gpio_pad_select_gpio(CONFIG_DISPLAY_I2C_SCL);
+    }
     i2c_master_bus_config_t disp_i2c_cfg = {
-        .i2c_port = BOARD_I2C_DISP_PORT,
+        .i2c_port = -1,
         .sda_io_num = CONFIG_DISPLAY_I2C_SDA,
         .scl_io_num = CONFIG_DISPLAY_I2C_SCL,
         .clk_source = I2C_CLK_SRC_DEFAULT,
@@ -244,13 +264,31 @@ esp_err_t iot_board_init(void) {
     };
     err = i2c_new_master_bus(&disp_i2c_cfg, &s_i2c_disp_bus_handle);
     if (err != ESP_OK) {
-      ESP_LOGE(TAG, "Failed to initialize display I2C bus: %s",
+      ESP_LOGW(TAG,
+               "Failed to initialize display I2C bus: %s — display will be "
+               "unavailable",
                esp_err_to_name(err));
-      return err;
+      s_i2c_disp_bus_handle = NULL;
+    } else {
+      ESP_LOGI(TAG, "Display I2C bus %d initialized: sda=%d, scl=%d",
+               BOARD_I2C_DISP_PORT, CONFIG_DISPLAY_I2C_SDA,
+               CONFIG_DISPLAY_I2C_SCL);
+      // Allow lines to settle then check idle levels.
+      // Both should read HIGH; LOW means pull-ups are too weak or something
+      // is actively driving the line (UART residual, unpowered device, etc).
+      vTaskDelay(pdMS_TO_TICKS(10));
+      int sda_lvl = gpio_get_level(CONFIG_DISPLAY_I2C_SDA);
+      int scl_lvl = gpio_get_level(CONFIG_DISPLAY_I2C_SCL);
+      if (sda_lvl && scl_lvl) {
+        ESP_LOGI(TAG, "Display I2C lines idle-high (SDA=%d SCL=%d) — OK",
+                 sda_lvl, scl_lvl);
+      } else {
+        ESP_LOGW(TAG,
+                 "Display I2C lines not idle-high (SDA=%d SCL=%d) — "
+                 "check pull-ups and that the display is powered",
+                 sda_lvl, scl_lvl);
+      }
     }
-    ESP_LOGI(TAG, "Display I2C bus %d initialized: sda=%d, scl=%d",
-             BOARD_I2C_DISP_PORT, CONFIG_DISPLAY_I2C_SDA,
-             CONFIG_DISPLAY_I2C_SCL);
   }
 #endif
 
