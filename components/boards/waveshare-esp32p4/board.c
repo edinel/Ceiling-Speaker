@@ -2,7 +2,8 @@
  * @file board.c
  * @brief Waveshare ESP32P4 DEV KIT board implementation
  *
- * Minimal implementation for Waveshare ESP32P4 DEV KIT boards with external I2S DAC.
+ * Minimal implementation for Waveshare ESP32P4 DEV KIT boards with external I2S
+ * DAC.
  */
 
 #include "iot_board.h"
@@ -33,7 +34,7 @@ esp_err_t iot_board_init(void) {
   }
 
   s_board_initialized = true;
-  ESP_LOGI(TAG, "Generic board initialized (no board-specific init needed)");
+  ESP_LOGI(TAG, "Waveshare ESP32-P4 DEV KIT initialized");
   return ESP_OK;
 }
 

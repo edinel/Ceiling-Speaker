@@ -1,7 +1,3 @@
-#ifndef CONFIG_WIFI_RMT_CACHE_TX_BUFFER_NUM
-#define CONFIG_WIFI_RMT_CACHE_TX_BUFFER_NUM CONFIG_WIFI_RMT_DYNAMIC_TX_BUFFER_NUM
-#endif
-
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
