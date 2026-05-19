@@ -79,6 +79,15 @@ static void buffered_audio_task(void *pvParameters) {
     struct timeval tv = {.tv_sec = 30, .tv_usec = 0};
     setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
+    // Clamp the kernel receive buffer so the lwIP TCP window closes quickly
+    // when our PCM ring is full and back-pressure reaches the sender within
+    // a couple of MSS.  Our real jitter buffer is audio_buffer (~8 s of
+    // decoded PCM); we don't want a second, uncontrolled jitter buffer
+    // hiding inside the network stack.  4 KB ≈ 3 MSS — large enough that
+    // a single recv() call still gets a full audio packet in one shot.
+    int rcvbuf = 4096;
+    setsockopt(client_sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+
     uint8_t *packet = state->buffered_recv_buffer;
     if (!packet) {
       packet = heap_caps_malloc(BUFFERED_AUDIO_PACKET_SIZE,
