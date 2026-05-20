@@ -351,12 +351,6 @@ static int create_ptp_socket(uint16_t port) {
 // PTP task - listens for messages on both ports
 static void ptp_task(void *pvParameters) {
   uint8_t buffer[256];
-  // Track running totals so the periodic status line can show deltas instead
-  // of cumulative numbers, which is easier to read when diagnosing why we are
-  // not locking (e.g. announce-only, all rejected, all outliers).
-  uint32_t last_sync = 0, last_followup = 0, last_announce = 0;
-  uint32_t last_rejected = 0, last_outlier = 0;
-  uint32_t last_status_ms = 0;
 
   while (ptp.running) {
     fd_set read_fds;
@@ -412,34 +406,6 @@ static void ptp_task(void *pvParameters) {
           process_ptp_message(buffer, (size_t)len, false);
         }
       }
-    }
-
-    // Periodic status log: every ~5 seconds while running, regardless of
-    // lock state, so we can see why a slave is failing to converge.
-    uint32_t now_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    if (last_status_ms == 0) {
-      last_status_ms = now_ms;
-    } else if ((now_ms - last_status_ms) >= 5000) {
-      uint32_t dsync = ptp.sync_count - last_sync;
-      uint32_t dfollowup = ptp.followup_count - last_followup;
-      uint32_t dannounce = ptp.announce_count - last_announce;
-      uint32_t drejected = ptp.rejected_master_count - last_rejected;
-      uint32_t doutlier = ptp.outlier_count - last_outlier;
-      ESP_LOGI(TAG,
-               "status: locked=%d offset=%+lldns samples=%d/%d "
-               "master=%016llx | last5s sync=%lu follow=%lu announce=%lu "
-               "reject=%lu outlier=%lu",
-               ptp.locked, (long long)ptp.filtered_offset_ns, ptp.sample_fill,
-               SAMPLE_BUFFER_SIZE, (unsigned long long)ptp.expected_clock_id,
-               (unsigned long)dsync, (unsigned long)dfollowup,
-               (unsigned long)dannounce, (unsigned long)drejected,
-               (unsigned long)doutlier);
-      last_sync = ptp.sync_count;
-      last_followup = ptp.followup_count;
-      last_announce = ptp.announce_count;
-      last_rejected = ptp.rejected_master_count;
-      last_outlier = ptp.outlier_count;
-      last_status_ms = now_ms;
     }
   }
 
