@@ -209,10 +209,11 @@ static void update_offset(int64_t new_offset_ns) {
           ptp.lock_start_ms = now_ms;
           ptp.lock_candidate_start_ms = 0;
           ESP_LOGI(TAG,
-                   "LOCKED: offset=%+lldns max_dev=%lldns samples=%d "
+                   "LOCKED: offset=%+lldns dev=%lldns samples=%lu "
                    "sync=%lu followup=%lu",
-                   (long long)ptp.filtered_offset_ns, (long long)max_dev,
-                   ptp.sample_fill, (unsigned long)ptp.sync_count,
+                   (long long)ptp.filtered_offset_ns, (long long)dev,
+                   (unsigned long)ptp.sample_count,
+                   (unsigned long)ptp.sync_count,
                    (unsigned long)ptp.followup_count);
         }
       }
@@ -221,8 +222,8 @@ static void update_offset(int64_t new_offset_ns) {
       if (ptp.locked && dev > LOCK_THRESHOLD_NS * 4) {
         ptp.locked = false;
         ptp.lock_start_ms = 0;
-        ESP_LOGW(TAG, "LOST LOCK: max_dev=%lldns (threshold=%lldns)",
-                 (long long)max_dev, (long long)(LOCK_THRESHOLD_NS * 4));
+        ESP_LOGW(TAG, "LOST LOCK: dev=%lldns (threshold=%lldns)",
+                 (long long)dev, (long long)(LOCK_THRESHOLD_NS * 4));
       }
     }
   }
@@ -585,8 +586,9 @@ void ptp_clock_set_master_clock_id(uint64_t clock_id) {
   ptp.lock_start_ms = 0;
   ptp.lock_candidate_start_ms = 0;
   ptp.filtered_offset_ns = 0;
-  ptp.sample_index = 0;
-  ptp.sample_fill = 0;
+  ptp.sample_count = 0;
+  ptp.previous_offset = 0;
+  ptp.previous_offset_time_ms = 0;
   ptp.awaiting_followup = false;
 }
 

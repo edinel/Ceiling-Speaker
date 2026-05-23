@@ -236,7 +236,7 @@ uint32_t audio_timing_get_advertised_latency(const audio_timing_t *timing) {
   // + PIPELINE_PROCESSING_LATENCY_US — decrypt + decode + net jitter constant
   uint32_t base =
       timing ? timing->output_latency_us : DEFAULT_BUFFER_LATENCY_US;
-  return base + HARDWARE_OUTPUT_LATENCY_US + PIPELINE_PROCESSING_LATENCY_US;
+  return base + HARDWARE_OUTPUT_LATENCY_US + PIPELINE_LATENCY_US;
 }
 
 void audio_timing_set_anchor(audio_timing_t *timing,
