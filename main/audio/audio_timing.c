@@ -9,12 +9,12 @@
 #include "ntp_clock.h"
 #include "ptp_clock.h"
 
-#define DEFAULT_BUFFER_LATENCY_US  200000 // 200ms startup jitter buffer
-#define HARDWARE_OUTPUT_LATENCY_US 46000  // ~46ms I2S DMA latency
+#define DEFAULT_BUFFER_LATENCY_US  200   // 200µs startup jitter buffer
+#define HARDWARE_OUTPUT_LATENCY_US 40000 // ~40ms I2S DMA latency
 // Additional pipeline latency to account for task scheduling, I2S write
 // blocking, and resampler processing.  Without this, frames pass the
 // timing check "on time" but actually exit the speaker several ms later.
-#define PIPELINE_LATENCY_US           10000 // ~10ms scheduling + write delay
+#define PIPELINE_LATENCY_US           1000 // ~1ms scheduling + write delay
 #define MIN_STARTUP_FRAMES            4
 #define DRIFT_ADJUST_THRESHOLD_FRAMES 2
 #define TIMING_THRESHOLD_US           40000 // 40ms early/late threshold
