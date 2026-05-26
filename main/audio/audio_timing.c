@@ -232,6 +232,18 @@ void audio_timing_set_anchor(audio_timing_t *timing,
   // track skip does not accumulate into the new anchor's counts.
   timing->consecutive_early_frames = 0;
   timing->consecutive_late_frames = 0;
+
+  // Compute lead time: how far in the future this anchor's network timestamp
+  // is relative to now.  Negative means the anchor is already in the past
+  // (normal: the phone pre-buffers and the anchor is 200–800 ms old by the
+  // time we receive it).
+  int64_t lead_ms = ((int64_t)network_time_ns -
+                     (int64_t)(ptp_clock_get_offset_ns() + now_ns)) /
+                    1000000LL;
+  ESP_LOGI(
+      TAG,
+      "Anchor set: rtp=%" PRIu32 " lead=%lld ms ptp_locked=%d quick_start=%d",
+      rtp_time, (long long)lead_ms, timing->ptp_locked, timing->quick_start);
 }
 
 void audio_timing_set_playing(audio_timing_t *timing, bool playing) {
@@ -445,12 +457,36 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       if (compute_early_us(timing, format, hdr->rtp_timestamp, sync_mode,
                            &early_us)) {
         if (early_us > TIMING_THRESHOLD_US) {
-          timing->consecutive_early_frames++;
+          // Only advance the stuck-anchor counter for NEW frames taken from
+          // the buffer — not for pending re-checks of the same early frame.
+          // A pending frame is re-examined every DMA callback (~8 ms) while
+          // we wait for wall-clock to reach its scheduled play time.  Counting
+          // those re-checks would fire the stuck-anchor detector in
+          // (MAX_CONSECUTIVE_EARLY × 8 ms) = 6 s even for a legitimately
+          // early frame that just needs to wait its pre-buffer depth (~1.5 s).
+          if (!from_pending) {
+            timing->consecutive_early_frames++;
+            // Log the first early frame after each anchor set (shows lead
+            // time before audio starts) and every 50 new frames after that
+            // (confirms the counter only counts real buffer reads, not
+            // pending re-checks).
+            if (timing->consecutive_early_frames == 1) {
+              ESP_LOGI(TAG,
+                       "First early frame: rtp=%" PRIu32 " early=%.1f ms"
+                       " quick_start=%d buffered=%d",
+                       hdr->rtp_timestamp, (float)early_us / 1000.0f,
+                       timing->quick_start, buffered_frames);
+            } else if (timing->consecutive_early_frames % 50 == 0) {
+              ESP_LOGD(TAG, "Early counter: %d/%d early=%.1f ms rtp=%" PRIu32,
+                       timing->consecutive_early_frames, MAX_CONSECUTIVE_EARLY,
+                       (float)early_us / 1000.0f, hdr->rtp_timestamp);
+            }
+          }
 
           // If we have had an implausibly long run of early frames the anchor
           // is probably stuck or wrong — give up on it so playback can
-          // continue.  This threshold is high enough (~6 s) that it never
-          // fires during normal pre-buffered-audio scenarios.
+          // continue.  This threshold is high enough (~17 s at 23 ms/frame)
+          // that it never fires during normal pre-buffered-audio scenarios.
           if (timing->consecutive_early_frames > MAX_CONSECUTIVE_EARLY) {
             ESP_LOGW(TAG,
                      "Invalidating stuck anchor: consecutive=%d, early=%lld ms",
@@ -525,7 +561,10 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
 
     if (!timing->playout_started) {
       timing->playout_started = true;
+      bool was_quick = timing->quick_start;
       timing->quick_start = false;
+      ESP_LOGI(TAG, "Playout started%s: rtp=%" PRIu32,
+               was_quick ? " (quick_start)" : "", hdr->rtp_timestamp);
     }
 
     // Tick the fill-depth controller's rate limiter once per played frame.

@@ -84,6 +84,15 @@ typedef struct {
   // ring buffer between FLUSHBUFFERED and the anchor, causing a second flush
   // and doubling the startup delay.
   bool discard_all_until_anchor;
+
+  // Snapshot of the expected RTP position taken the moment the sender signals
+  // PAUSE (SETRATEANCHORTIME rate=0).  Path B in audio_receiver_set_anchor_time
+  // uses this as the reference when comparing the new anchor on RESUME, so
+  // that a long pause does not make the wall-clock-elapsed estimate overshoot
+  // by (pause_duration × sample_rate) and false-trigger a seek flush.
+  // Cleared on flush/reset and consumed after one use.
+  uint32_t paused_rtp;
+  bool paused_rtp_valid;
 } audio_receiver_state_t;
 
 bool audio_stream_process_frame(audio_receiver_state_t *state,

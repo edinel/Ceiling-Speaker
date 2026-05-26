@@ -6,6 +6,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include "audio_buffer.h"
 #include "audio_decoder.h"
@@ -221,18 +222,52 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
   // PAUSE → RESUME cycle but no FLUSHBUFFERED.  The buffer may already be
   // empty (consumed during playback), so the seek-detection heuristic
   // below (which needs oldest_rtp from the buffer) would miss it.
-  // Compare the new anchor's RTP with the previous one; a delta > 5 s of
-  // samples means a different track.
+  //
+  // Compare the new anchor against the EXPECTED current playback position
+  // (old_anchor_rtp + elapsed_time × sample_rate), NOT against the raw old
+  // anchor.  The raw old anchor was set at the start of the previous play
+  // segment; comparing against it gives a delta equal to (elapsed_play_time +
+  // new_anchor_lead_time), which easily exceeds the 5-second threshold on a
+  // normal pause/resume within the same track — causing a false flush that
+  // empties valid pre-buffered frames and produces 6+ seconds of silence.
+  // Using the expected position instead, normal resume gives a delta of only
+  // the anchor's lead-time offset (< 2 s), while a real track-change or seek
+  // gives a huge delta (many minutes).
   if (!gates_armed && receiver.timing.anchor_valid) {
-    int32_t delta = (int32_t)(rtp_time - receiver.timing.anchor_rtp_time);
+    // Choose reference point for the seek-detection comparison:
+    //   - If we have a pause snapshot, use it. The snapshot was taken at the
+    //     exact moment the sender said PAUSE, so it reflects the true pause
+    //     position rather than a wall-clock estimate that keeps running during
+    //     the pause and overshoots by (pause_duration x sample_rate).
+    //   - Otherwise fall back to the elapsed-time estimate (covers the edge
+    //     case where a track changes without a prior PAUSE signal).
+    uint32_t reference_rtp;
+    if (receiver.paused_rtp_valid) {
+      reference_rtp = receiver.paused_rtp;
+      receiver.paused_rtp_valid = false; // one-shot: consume after use
+      ESP_LOGD(TAG, "Path B: using pause snapshot rtp=%lu",
+               (unsigned long)reference_rtp);
+    } else {
+      int64_t elapsed_us = esp_timer_get_time() -
+                           (receiver.timing.anchor_local_time_ns / 1000LL);
+      if (elapsed_us < 0)
+        elapsed_us = 0;
+      // Cap elapsed to prevent int64 overflow on very long pauses.
+      if (elapsed_us > 600000000LL)
+        elapsed_us = 600000000LL;
+      int32_t elapsed_samples =
+          (int32_t)((elapsed_us * (int64_t)sample_rate) / 1000000LL);
+      reference_rtp =
+          receiver.timing.anchor_rtp_time + (uint32_t)elapsed_samples;
+    }
+    int32_t delta = (int32_t)(rtp_time - reference_rtp);
     int32_t abs_delta = delta < 0 ? -delta : delta;
     if (abs_delta > seek_threshold) {
       ESP_LOGI(TAG,
-               "Anchor change detected: old_rtp=%lu new_rtp=%lu "
-               "delta=%ld samples (%.1f s) — flushing & arming gates",
-               (unsigned long)receiver.timing.anchor_rtp_time,
-               (unsigned long)rtp_time, (long)delta,
-               (float)delta / sample_rate);
+               "Anchor change detected: ref_rtp=%lu new_rtp=%lu "
+               "delta=%ld samples (%.1f s) - flushing & arming gates",
+               (unsigned long)reference_rtp, (unsigned long)rtp_time,
+               (long)delta, (float)delta / sample_rate);
       audio_buffer_flush(&receiver.buffer);
       receiver.timing.playout_started = false;
       receiver.timing.pending_valid = false;
@@ -245,6 +280,12 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
       receiver.discard_above_rtp_valid = true;
       receiver.timing.quick_start = true;
       gates_armed = true;
+    } else {
+      ESP_LOGD(TAG,
+               "Anchor resume OK: ref_rtp=%lu new_rtp=%lu "
+               "delta=%ld samples (%.2f s) - same track, no flush",
+               (unsigned long)reference_rtp, (unsigned long)rtp_time,
+               (long)delta, (float)delta / (float)sample_rate);
     }
   }
 
@@ -300,6 +341,32 @@ void audio_receiver_set_playing(bool playing) {
   audio_timing_set_playing(&receiver.timing, playing);
   if (!playing) {
     receiver.blocks_read_in_sequence = 0;
+    // Snapshot the expected RTP position at the moment of pause so that
+    // Path B in audio_receiver_set_anchor_time() can compare the next
+    // resume anchor against the actual pause position.
+    //
+    // Without this, Path B uses (anchor_rtp + wall_clock_elapsed), which
+    // overshoots by the pause duration and fires a false seek flush on any
+    // pause >= seek_threshold (5 s) — causing up to 7+ s of silence when
+    // pre-buffered frames end up far ahead of the unwanted new anchor.
+    if (receiver.timing.anchor_valid && receiver.stream) {
+      int sample_rate = receiver.stream->format.sample_rate;
+      if (sample_rate <= 0)
+        sample_rate = 44100;
+      int64_t elapsed_us = esp_timer_get_time() -
+                           (receiver.timing.anchor_local_time_ns / 1000LL);
+      if (elapsed_us < 0)
+        elapsed_us = 0;
+      if (elapsed_us > 600000000LL)
+        elapsed_us = 600000000LL;
+      int32_t elapsed_samples =
+          (int32_t)((elapsed_us * (int64_t)sample_rate) / 1000000LL);
+      receiver.paused_rtp =
+          receiver.timing.anchor_rtp_time + (uint32_t)elapsed_samples;
+      receiver.paused_rtp_valid = true;
+      ESP_LOGD(TAG, "Pause: RTP snapshot=%lu (elapsed=%.2f s)",
+               (unsigned long)receiver.paused_rtp, (float)elapsed_us / 1e6f);
+    }
   }
 }
 
@@ -497,6 +564,7 @@ void audio_receiver_flush(void) {
   receiver.discard_above_rtp_valid = false;
   receiver.arm_gate_on_next_anchor = false;
   receiver.discard_all_until_anchor = false;
+  receiver.paused_rtp_valid = false;
   receiver.blocks_read_in_sequence = 1;
 }
 
