@@ -243,8 +243,7 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
       receiver.discard_before_rtp_valid = true;
       receiver.discard_above_rtp = rtp_time + gate_window;
       receiver.discard_above_rtp_valid = true;
-      receiver.timing.post_flush = true;
-      receiver.timing.post_flush_start_us = 0;
+      receiver.timing.quick_start = true;
       gates_armed = true;
     }
   }
@@ -273,8 +272,7 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
       receiver.timing.pending_frame_len = 0;
       receiver.timing.ready_time_us = 0;
       receiver.blocks_read_in_sequence = 0;
-      receiver.timing.post_flush = true;
-      receiver.timing.post_flush_start_us = 0;
+      receiver.timing.quick_start = true;
       if (!gates_armed) {
         receiver.discard_before_rtp = rtp_time;
         receiver.discard_before_rtp_valid = true;
@@ -504,13 +502,11 @@ void audio_receiver_flush(void) {
 
 void audio_receiver_seek_flush(void) {
   // Mid-stream seek flush (FLUSH / immediate FLUSHBUFFERED).  Like
-  // audio_receiver_flush() but sets timing.post_flush so audio_timing_read
-  // plays frames immediately after the seek instead of silencing them while
-  // the anchor's pre-buffer window (several seconds) elapses.
+  // audio_receiver_flush() but sets timing.quick_start so audio_timing_read
+  // starts as soon as 1 frame is available, with normal anchor-based timing.
   // Also disarms any pending deferred flush (audio_timing_reset clears it).
   audio_receiver_flush();
-  receiver.timing.post_flush = true;
-  receiver.timing.post_flush_start_us = 0; // will be set on first frame
+  receiver.timing.quick_start = true;
   // Request that the RTP gate be armed as soon as the next anchor arrives.
   // This covers the forward-seek case where the buffer is already empty by
   // the time SETRATEANCHORTIME arrives, so the seek-detection heuristic

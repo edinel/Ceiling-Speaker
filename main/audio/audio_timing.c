@@ -18,12 +18,6 @@
 #define MIN_STARTUP_FRAMES            4
 #define DRIFT_ADJUST_THRESHOLD_FRAMES 2
 #define TIMING_THRESHOLD_US           40000 // 40ms early/late threshold
-// If a frame is late by more than this, flush the whole buffer at once
-// instead of draining one frame per DMA callback (which would cause seconds
-// of silence while thousands of stale frames are individually dropped).
-// Kept independent of DEFAULT_BUFFER_LATENCY_US so reducing the startup
-// buffer doesn't also reduce the late-detection threshold.
-#define BULK_FLUSH_LATE_THRESHOLD_US 2000000 // 2 seconds
 // MAX_CONSECUTIVE_EARLY: number of consecutive early frames before we conclude
 // the anchor is genuinely stuck/wrong.  At ~8 ms per frame this is ~6 seconds
 // of silence, which is well beyond any normal pre-buffer depth.
@@ -33,30 +27,6 @@
 // this is ~24 ms — just enough to distinguish a genuine stale-buffer from a
 // one-off WiFi jitter spike, without the 20-frame drain+log storm.
 #define MAX_CONSECUTIVE_LATE 3
-// MAX_CONSECUTIVE_LATE: number of consecutive individually-late frames before
-// we conclude the whole buffer is stale and do a bulk flush.  At ~8 ms/frame
-// this is ~24 ms — just enough to distinguish a genuine stale-buffer from a
-// one-off WiFi jitter spike, without the 20-frame drain+log storm.
-#define MAX_CONSECUTIVE_LATE 3
-
-// POST_FLUSH_STALE_THRESHOLD_US: in post_flush mode the bypass plays frames
-// unconditionally to avoid silence during the phone's pre-buffer window
-// (typically 2–4 s).  Frames that are MORE than this many µs early are from
-// the wrong seek position (old audio still draining through the TCP pipeline)
-// and must be discarded rather than played.  10 s is well above the deepest
-// observed AirPlay 2 pre-buffer depth and well below any real seek delta.
-#define POST_FLUSH_STALE_THRESHOLD_US 10000000LL // 10 seconds
-// POST_FLUSH_LATE_DROP_US: in post_flush, frames whose play time is more
-// than this far in the past are dropped rather than played.  Set above the
-// pre-buffer depth that normal post_flush handles (~200 ms early), but well
-// below the multi-second lateness seen on AP2 group rejoin.
-#define POST_FLUSH_LATE_DROP_US 300000LL // 300 ms
-// POST_FLUSH_TIMEOUT_US: safety-net timeout for the post_flush bypass.
-// Normal exit is timing-driven (exit only when early_us is within
-// ±TIMING_THRESHOLD_US).  This timeout only fires if timing never stabilises
-// (e.g. anchor permanently stuck), preventing indefinite bypass.  Set long
-// enough that it never fires during normal track skips.
-#define POST_FLUSH_TIMEOUT_US 5000000LL // 5 s (safety net only)
 
 // Closed-loop fill-depth controller.  Keeps the time-span of buffered audio
 // (newest_play_time − oldest_play_time) close to timing->output_latency_us
@@ -191,8 +161,7 @@ void audio_timing_reset(audio_timing_t *timing) {
   timing->ready_time_us = 0;
   timing->consecutive_early_frames = 0;
   timing->consecutive_late_frames = 0;
-  timing->post_flush = false;
-  timing->post_flush_start_us = 0;
+  timing->quick_start = false;
   timing->deferred_flush_pending = false;
   timing->flush_until_ts = 0;
   timing->frames_since_correction = 0;
@@ -236,8 +205,8 @@ uint32_t audio_timing_get_advertised_latency(const audio_timing_t *timing) {
   // schedules sends to land in our sorted buffer at the right time.
   //
   //   output_latency_us         — controller target (jitter-buffer depth)
-  // + HARDWARE_OUTPUT_LATENCY_US — I2S DMA delay (fixed)
-  // + PIPELINE_PROCESSING_LATENCY_US — decrypt + decode + net jitter constant
+  // + audio_output_get_hardware_latency_us() — I2S DMA delay (dynamic)
+  // + PIPELINE_LATENCY_US — scheduling + write delay constant
   uint32_t base =
       timing ? timing->output_latency_us : DEFAULT_BUFFER_LATENCY_US;
   return base + audio_output_get_hardware_latency_us() + PIPELINE_LATENCY_US;
@@ -297,11 +266,13 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
   int buffered_frames = audio_buffer_get_frame_count(buffer);
 
   // Wait for enough buffer before starting.
-  // In post_flush mode (after a seek/skip), start playing as soon as 1 frame
-  // is available — the whole point is to minimise the gap between tracks.
-  // Normal startup still waits for target_buffer_frames to build jitter margin.
+  // In quick_start mode (after a seek/skip), start as soon as 1 frame is
+  // available to minimise the gap between tracks.  Anchor-based timing
+  // still applies — if the frame is early, silence is output until its
+  // scheduled play time, just like shairport-sync.
+  // Normal startup waits for target_buffer_frames to build jitter margin.
   if (!timing->playout_started && !timing->pending_valid) {
-    int required = timing->post_flush ? 1 : (int)timing->target_buffer_frames;
+    int required = timing->quick_start ? 1 : (int)timing->target_buffer_frames;
     if (buffered_frames < required) {
       return 0;
     }
@@ -454,123 +425,26 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
         timing->ready_time_us = 0;
         timing->consecutive_early_frames = 0;
         timing->consecutive_late_frames = 0;
-        // post_flush = true so the first frame of the next track plays
-        // immediately rather than waiting out the phone's pre-buffer window.
-        timing->post_flush = true;
-        timing->post_flush_start_us = 0;
+        // quick_start so the first frame of the next track starts playing
+        // as soon as 1 frame arrives, with normal anchor timing applied.
+        timing->quick_start = true;
         return 0;
       }
     }
 
     // Handle early/late frames based on anchor timing.
     //
-    // post_flush bypasses ALL timing checks (early and late) and plays every
-    // frame unconditionally.  This mirrors shairport-sync's
-    // first_packet_timestamp==0 path: after a seek or flush, the phone's anchor
-    // may be stale by hundreds of ms (startup buffer fill delay + pre-buffer
-    // depth), so frames appear early or late through no fault of the stream.
-    // Enforcing timing here causes silence or cascading re-flushes.
-    // post_flush clears only when a frame is genuinely on-time, at which point
-    // the anchor has settled and normal timing can re-engage.
+    // After a seek/flush, anchor-based timing is applied immediately from the
+    // first frame — no bypass.  With a stable PTP clock the anchor is
+    // accurate, so early frames are held as pending (silence output) until
+    // their scheduled play time, and late frames are dropped.  This mirrors
+    // shairport-sync's approach and guarantees the first audible sample is
+    // correctly synchronised.
     if (timing->anchor_valid && format->sample_rate > 0) {
       int64_t early_us = 0;
       if (compute_early_us(timing, format, hdr->rtp_timestamp, sync_mode,
                            &early_us)) {
-        if (timing->post_flush) {
-          // Bypass: play regardless of early/late — the phone pre-buffers
-          // several seconds ahead of the anchor's current position after a
-          // seek, so frames appear early through no fault of the stream.
-          //
-          // Track the start time so we can exit post_flush after a timeout
-          // rather than requiring early to reach ±TIMING_THRESHOLD_US (which
-          // may never happen if the pre-buffer depth exceeds the threshold).
-          if (timing->post_flush_start_us == 0) {
-            timing->post_flush_start_us = esp_timer_get_time();
-          }
-          int64_t flush_elapsed =
-              esp_timer_get_time() - timing->post_flush_start_us;
-          // Exception: frames that are MORE than POST_FLUSH_STALE_THRESHOLD_US
-          // early are old-position data still draining from the TCP kernel
-          // buffer (e.g. frames from 2:30 after a seek back to 0:00).  Discard
-          // those so the user never hears audio from the wrong position.
-          if (early_us > POST_FLUSH_STALE_THRESHOLD_US) {
-            // This frame is from the wrong seek position — still draining the
-            // TCP kernel buffer from before the flush.  Bulk-flush the entire
-            // ring buffer so all remaining stale (and any already-queued new)
-            // frames are cleared in one shot.  Draining one-by-one takes
-            // hundreds of DMA callbacks (8 frames/callback × hundreds of stale
-            // frames) causing seconds of silent lag that compounds each seek.
-            ESP_LOGW(
-                TAG, "post_flush: bulk flush %d stale frames (%lld s early)",
-                audio_buffer_get_frame_count(buffer), early_us / 1000000LL);
-            if (from_pending) {
-              timing->pending_valid = false;
-              timing->pending_frame_len = 0;
-            } else {
-              audio_buffer_return(buffer, item);
-            }
-            audio_buffer_flush(buffer);
-            timing->playout_started = false;
-            timing->ready_time_us = 0;
-            timing->consecutive_early_frames = 0;
-            timing->consecutive_late_frames = 0;
-            // Keep post_flush=true so new-position frames that refill the
-            // buffer will play immediately rather than waiting out the anchor.
-            return 0;
-          }
-          // Within pre-buffer depth — play and check if we should exit.
-          // Exit post_flush when either:
-          //  1. early is within ±TIMING_THRESHOLD_US (anchor is on-time), or
-          //  2. POST_FLUSH_TIMEOUT_US has elapsed (pre-buffer depth exceeds
-          //     threshold but anchor is stable — let normal timing take over
-          //     so frames are held until their scheduled play point).
-          //
-          // Exception: a frame that is more than POST_FLUSH_LATE_DROP_US in
-          // the past is from a previous play position (typical of an AP2
-          // group-rejoin where the source replays the group's continuous
-          // timeline into our buffer).  Playing it would emit audibly stale
-          // audio; instead drop it and continue draining within post_flush
-          // so we burn through the backlog and reach the live edge.
-          if (early_us < -POST_FLUSH_LATE_DROP_US) {
-            if (timing->consecutive_late_frames == 0) {
-              ESP_LOGW(TAG, "post_flush: dropping stale frame %lld ms late",
-                       -early_us / 1000LL);
-            }
-            timing->consecutive_late_frames++;
-            if (stats) {
-              stats->late_frames++;
-            }
-            if (from_pending) {
-              timing->pending_valid = false;
-              timing->pending_frame_len = 0;
-            } else {
-              audio_buffer_return(buffer, item);
-            }
-            continue;
-          }
-          if (early_us >= -TIMING_THRESHOLD_US &&
-              early_us <= TIMING_THRESHOLD_US) {
-            // Timing has stabilised — exit post_flush cleanly so normal
-            // timing takes over without a discontinuity.
-            ESP_LOGI(TAG, "post_flush done: early=%lld ms, elapsed=%lld ms",
-                     early_us / 1000LL, flush_elapsed / 1000LL);
-            timing->post_flush = false;
-            timing->post_flush_start_us = 0;
-          } else if (flush_elapsed >= POST_FLUSH_TIMEOUT_US) {
-            // Safety net: timing never stabilised — exit to avoid playing
-            // indefinitely out of sync.  A brief gap may follow if the next
-            // frame is still outside the normal timing window.
-            ESP_LOGW(
-                TAG,
-                "post_flush safety timeout: early=%lld ms, elapsed=%lld ms",
-                early_us / 1000LL, flush_elapsed / 1000LL);
-            timing->post_flush = false;
-            timing->post_flush_start_us = 0;
-          }
-          timing->consecutive_early_frames = 0;
-          timing->consecutive_late_frames = 0;
-          // Fall through to play the frame.
-        } else if (early_us > TIMING_THRESHOLD_US) {
+        if (early_us > TIMING_THRESHOLD_US) {
           timing->consecutive_early_frames++;
 
           // If we have had an implausibly long run of early frames the anchor
@@ -614,17 +488,8 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
 
           // Late frame — drop it and continue draining within the SAME call.
           // The 256-attempt drain loop chews through stale frames at zero
-          // wall-time cost.  We used to bulk-flush the whole buffer on
-          // >2 s late frames as a shortcut, but that path:
-          //  - re-armed post_flush, which then played the very next stale
-          //    frame unconditionally (producing audible jitter), and
-          //  - returned silence to the DMA, burning ~23 ms of wall time
-          //    while RTP didn't advance — each cycle made us more late and
-          //    we could never catch up (observed in AirPlay 2 group rejoin,
-          //    where the source's anchor is set in the past relative to
-          //    current PTP time and frames pour in 1.5–2 s late).
-          // Dropping & continuing lets the drain loop skip past arbitrarily
-          // many stale frames in one call.
+          // wall-time cost, skipping past arbitrarily many stale frames in
+          // one pass without the DMA ever idling.
           if (timing->consecutive_late_frames == 1) {
             ESP_LOGW(TAG, "Dropping late frame(s): %lld ms",
                      -early_us / 1000LL);
@@ -660,6 +525,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
 
     if (!timing->playout_started) {
       timing->playout_started = true;
+      timing->quick_start = false;
     }
 
     // Tick the fill-depth controller's rate limiter once per played frame.
