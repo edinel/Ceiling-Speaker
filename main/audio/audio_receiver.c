@@ -245,8 +245,19 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
     if (receiver.paused_rtp_valid) {
       reference_rtp = receiver.paused_rtp;
       receiver.paused_rtp_valid = false; // one-shot: consume after use
-      ESP_LOGD(TAG, "Path B: using pause snapshot rtp=%lu",
-               (unsigned long)reference_rtp);
+      // Compute the pause duration from the RTP snapshot so we can notify
+      // the PTP clock without tracking a separate wall-clock timestamp.
+      // anchor_local_time_ns/1000 is the µs when the anchor was set;
+      // adding the played-sample offset gives the µs when play paused.
+      int32_t played =
+          (int32_t)(reference_rtp - receiver.timing.anchor_rtp_time);
+      int64_t pause_time_us = receiver.timing.anchor_local_time_ns / 1000LL +
+                              (int64_t)played * 1000000LL / sample_rate;
+      int64_t pause_us = esp_timer_get_time() - pause_time_us;
+      ptp_clock_notify_resume((pause_us > 0) ? (uint32_t)(pause_us / 1000LL)
+                                             : 0);
+      ESP_LOGD(TAG, "Path B: pause snapshot rtp=%lu pause=%.1f s",
+               (unsigned long)reference_rtp, (float)pause_us / 1e6f);
     } else {
       int64_t elapsed_us = esp_timer_get_time() -
                            (receiver.timing.anchor_local_time_ns / 1000LL);

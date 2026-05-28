@@ -64,6 +64,12 @@ static const char *TAG = "ptp_clock";
 #define SMOOTH_NEG_CLAMP_NS    (-2500000LL) // clamp negative jitter at -2.5ms
 #define STARTUP_DURATION_MS    1000 // first second: aggressive positive tracking
 
+// Threshold above which we reset the PTP smoothing filter on resume.
+// E.g. at 50 ppm crystal accuracy, 30 s of pause accumulates ~1.5 ms of drift —
+// large enough to be audible in multi-room but well within the 50 ms outlier
+// window.  Below this threshold the drift is negligible (<0.25 ms at 5 s).
+#define PTP_LONG_PAUSE_THRESHOLD_MS 30000
+
 // PTP state
 static struct {
   bool running;
@@ -547,6 +553,29 @@ void ptp_clock_clear(void) {
   // Drop the master filter so the next session can lock to whatever master
   // its anchor packet names (which may differ from the previous session).
   ptp.expected_clock_id = 0;
+}
+
+void ptp_clock_notify_resume(uint32_t pause_duration_ms) {
+  if (pause_duration_ms < PTP_LONG_PAUSE_THRESHOLD_MS) {
+    return; // drift too small to matter
+  }
+  // Reset the "previous sample" pointer so the very next PTP FOLLOW_UP is
+  // accepted unconditionally (the first-sample path in update_offset()).
+  // This mirrors what nqptp does on its "B" (begin) signal:
+  //   "when the clock goes from inactive to active, NQPTP resets clock
+  //    smoothing to the new offset" -- nqptp-shm-structures.h
+  //
+  // We keep filtered_offset_ns so that audio_timing can continue to use the
+  // last-known offset until the first new sample arrives (~125 ms away).
+  // We also reset mastership_start_ms so the STARTUP_DURATION_MS aggressive-
+  // positive window kicks in again for a faster upward catch-up.
+  ptp.previous_offset_time_ms = 0;
+  ptp.mastership_start_ms = 0;
+  ESP_LOGI(TAG,
+           "notify_resume: pause=%lu ms, resetting PTP smoothing "
+           "(est. drift %.1f ms @ 50ppm)",
+           (unsigned long)pause_duration_ms,
+           (float)pause_duration_ms * 50.0f / 1000000.0f);
 }
 
 bool ptp_clock_is_locked(void) {
