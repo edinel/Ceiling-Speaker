@@ -170,16 +170,29 @@ listening in the bathroom. All electronics live in the attic above the bathroom.
 - **No I2C configuration needed** — plug-and-play unlike TLV320DAC3100
 
 ### PCM5100 DAC Wiring (I2S)
-| PCM5100 Pin | ESP32 Feather V2 |
-|---|---|
-| BCK (Bit Clock) | Any free GPIO (I2S bit clock) |
-| LRCK (Word Select) | Any free GPIO (I2S word select) |
-| DIN (Data) | Any free GPIO (I2S data) |
-| GND | GND |
-| VCC | 3.3V |
-| FMT | GND (I2S format) |
-| XMT | 3.3V (unmute) |
-| SCK | GND (use internal clock) |
+| PCM5100 Pin | XIAO ESP32C5 silkscreen | GPIO |
+|---|---|---|
+| VCC | 3V3 | — |
+| GND | GND | — |
+| BCK (Bit Clock) | D8 | GPIO8 |
+| LRCK (Word Select) | D9 | GPIO9 |
+| DIN (Data) | D10 | GPIO10 |
+| FMT | GND (tie) | — (selects I2S format) |
+| XMT | 3V3 (tie) | — (unmutes DAC) |
+| SCK | GND (tie) | — (DAC uses internal PLL) |
+
+### PCM5100 → TPA3116D2 Analog Wiring
+
+Stereo DAC output is summed to mono via two equal resistors before the amp input.
+
+| PCM5100 | Via | TPA3116D2 |
+| --- | --- | --- |
+| LOUT | 10kΩ to summing node | IN+ |
+| ROUT | 10kΩ to summing node | IN+ |
+| AGND | direct | IN- (signal ground) |
+
+- OUT+ and OUT− on the amp connect directly to the ceiling speaker (BTL output — do not ground either terminal)
+- Use the LOUT/ROUT pads on the PCM5100 board, not the 3.5mm jack
 
 ## Power Chain
 ```
