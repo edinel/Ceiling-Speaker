@@ -111,31 +111,32 @@ void mdns_airplay_init(void) {
   // AirPlay v1 (classic RAOP): match squeezelite-esp32 txt record format.
   // No features, no pk, no HAP pairing — just classic RAOP fields.
   mdns_txt_item_t raop_txt[] = {
-      {"am", AIRPLAY_MODEL}, {"tp", "UDP"}, // Transport protocol
-      {"sm", "false"},                      // Sharing mode
-      {"sv", "false"},                      // Server version (unused)
-      {"ek", "1"},                          // Encryption key available
-      {"et", "0,1"},                        // Encryption types: none, RSA
-      {"md", AIRPLAY_METADATA_TYPES},       // Metadata types
-      {"cn", "0,1"},                        // Audio codecs: PCM, ALAC
-      {"ch", "2"},                          // Channels
-      {"ss", "16"},                         // Sample size (bits)
-      {"sr", "44100"},                      // Sample rate
-      {"vn", "3"},                          // Version number
-      {"txtvers", "1"},                     // TXT record version
+      {"am", AIRPLAY_MODEL},
+      {"tp", "UDP"},                  // Transport protocol
+      {"sm", "false"},                // Sharing mode
+      {"sv", "false"},                // Server version (unused)
+      {"ek", "1"},                    // Encryption key available
+      {"et", "0,1"},                  // Encryption types: none, RSA
+      {"md", AIRPLAY_METADATA_TYPES}, // Metadata types
+      {"cn", "0,1"},                  // Audio codecs: PCM, ALAC
+      {"ch", "2"},                    // Channels
+      {"ss", "16"},                   // Sample size (bits)
+      {"sr", "44100"},                // Sample rate
+      {"vn", "3"},                    // Version number
+      {"txtvers", "1"},               // TXT record version
   };
 #else
   mdns_txt_item_t raop_txt[] = {
       {"am", AIRPLAY_MODEL},
-      {"cn", "0,1,2,3"},     // Audio codecs: PCM, ALAC, AAC, AAC-ELD
-      {"da", "true"},        // Digest auth
-      {"et", "0,3,5"},       // Encryption types
-      {"ft", features_str},  // Features (same as airplay)
+      {"cn", "0,1,2,3"},              // Audio codecs: PCM, ALAC, AAC, AAC-ELD
+      {"da", "true"},                 // Digest auth
+      {"et", "0,3,5"},                // Encryption types
+      {"ft", features_str},           // Features (same as airplay)
       {"md", AIRPLAY_METADATA_TYPES}, // Metadata types
-      {"pk", pk_str},        // Public key
-      {"sf", AIRPLAY_FLAGS}, // Status flags
-      {"tp", "UDP"},         // Transport protocol
-      {"vn", "65537"},       // Version number
+      {"pk", pk_str},                 // Public key
+      {"sf", AIRPLAY_FLAGS},          // Status flags
+      {"tp", "UDP"},                  // Transport protocol
+      {"vn", "65537"},                // Version number
       {"vs", AIRPLAY_SOURCE_VERSION},
       {"vv", AIRPLAY_PROTOCOL_VERSION},
   };
