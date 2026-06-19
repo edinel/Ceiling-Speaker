@@ -23,6 +23,8 @@
 static const char *TAG = "ethernet";
 
 #define ETH_SPI_CLOCK_MHZ 20
+// lwIP DHCP hostnames are limited to 31 characters plus the trailing NUL.
+#define DHCP_HOSTNAME_MAX_LEN 31
 
 static esp_netif_t *s_eth_netif = NULL;
 static esp_eth_handle_t s_eth_handle = NULL;
@@ -195,7 +197,7 @@ void ethernet_set_hostname(const char *device_name) {
   if (!s_eth_netif || !device_name) {
     return;
   }
-  char hostname[33];
+  char hostname[DHCP_HOSTNAME_MAX_LEN + 1];
   size_t j = 0;
   for (size_t i = 0; device_name[i] && j < sizeof(hostname) - 1; i++) {
     char c = device_name[i];
