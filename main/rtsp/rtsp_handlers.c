@@ -1730,9 +1730,9 @@ static void handle_teardown(int socket, rtsp_conn_t *conn,
     // disconnect. v2 sessions clear immediately.
     if (conn->protocol_version != 1) {
       dacp_clear_session();
+      conn->dacp_id[0] = '\0';
+      conn->active_remote[0] = '\0';
     }
-    conn->dacp_id[0] = '\0';
-    conn->active_remote[0] = '\0';
     ntp_clock_stop();
     conn->timing_port = 0;
   }
