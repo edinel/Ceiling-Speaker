@@ -344,13 +344,21 @@ static esp_err_t led_brightness_post_handler(httpd_req_t *req) {
   cJSON *val = cJSON_GetObjectItem(json, "brightness");
   if (val && cJSON_IsNumber(val)) {
     int b = (int)val->valuedouble;
-    if (b < 0) b = 0;
-    if (b > 255) b = 255;
-    led_set_brightness((uint8_t)b);
-    cJSON_AddBoolToObject(response, "success", true);
+    if (b < 0)
+      b = 0;
+    if (b > 255)
+      b = 255;
+    esp_err_t err = led_set_brightness((uint8_t)b);
+    if (err == ESP_OK) {
+      cJSON_AddBoolToObject(response, "success", true);
+    } else {
+      cJSON_AddBoolToObject(response, "success", false);
+      cJSON_AddStringToObject(response, "error", esp_err_to_name(err));
+    }
   } else {
     cJSON_AddBoolToObject(response, "success", false);
-    cJSON_AddStringToObject(response, "error", "Expected {\"brightness\": 0-255}");
+    cJSON_AddStringToObject(response, "error",
+                            "Expected {\"brightness\": 0-255}");
   }
 
   char *json_str = cJSON_Print(response);
@@ -755,7 +763,8 @@ esp_err_t web_server_start(uint16_t port) {
   config.max_open_sockets = 3; // Limit to save lwIP socket slots for AirPlay
 #endif
   config.lru_purge_enable = true; // Reclaim stale sockets when all are in use
-  config.max_uri_handlers = 28;   // Room for captive portal + EQ + speedtest + brightness
+  config.max_uri_handlers =
+      28; // Room for captive portal + EQ + speedtest + brightness
   config.max_resp_headers = 8;
   config.stack_size = 8192;
 
@@ -820,7 +829,8 @@ esp_err_t web_server_start(uint16_t port) {
 
   httpd_uri_t led_brightness_post_uri = {.uri = "/api/led/brightness",
                                          .method = HTTP_POST,
-                                         .handler = led_brightness_post_handler};
+                                         .handler =
+                                             led_brightness_post_handler};
   httpd_register_uri_handler(s_server, &led_brightness_post_uri);
 
   httpd_uri_t ota_uri = {.uri = "/api/ota/update",
