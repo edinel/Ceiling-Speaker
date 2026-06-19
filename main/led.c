@@ -643,6 +643,11 @@ void led_set_error(bool error) {
 }
 
 esp_err_t led_set_brightness(uint8_t brightness) {
+  esp_err_t err = settings_set_led_brightness(brightness);
+  if (err != ESP_OK) {
+    return err;
+  }
+
   s_brightness = brightness;
 #if CONFIG_LED_STATUS_GPIO >= 0
   s_status_duty = brightness;
@@ -653,7 +658,7 @@ esp_err_t led_set_brightness(uint8_t brightness) {
 #endif
   // Re-render without changing previous/current state history.
   render_state(s_current_state);
-  return settings_set_led_brightness(brightness);
+  return ESP_OK;
 }
 
 uint8_t led_get_brightness(void) {
