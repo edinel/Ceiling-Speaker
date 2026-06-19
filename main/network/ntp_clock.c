@@ -224,6 +224,13 @@ static void ntp_task(void *pvParameters) {
   vTaskDelete(NULL);
 }
 
+static bool ntp_wait_for_task_stopped(int timeout_ticks) {
+  while (ntp.task_handle != NULL && timeout_ticks-- > 0) {
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+  return ntp.task_handle == NULL;
+}
+
 esp_err_t ntp_clock_start_client(uint32_t remote_ip, uint16_t remote_port) {
   if (ntp.running) {
     // If already running to same target, keep going
@@ -233,8 +240,15 @@ esp_err_t ntp_clock_start_client(uint32_t remote_ip, uint16_t remote_port) {
     }
     // Stop existing and restart with new target
     ntp_clock_stop();
-    if (ntp.task_handle != NULL) {
+    if (!ntp_wait_for_task_stopped(20)) {
       ESP_LOGE(TAG, "Previous NTP task did not stop");
+      return ESP_ERR_INVALID_STATE;
+    }
+  }
+  if (ntp.task_handle != NULL) {
+    ESP_LOGW(TAG, "NTP task still stopping, waiting");
+    if (!ntp_wait_for_task_stopped(20)) {
+      ESP_LOGE(TAG, "NTP task still active");
       return ESP_ERR_INVALID_STATE;
     }
   }
@@ -294,11 +308,7 @@ void ntp_clock_stop(void) {
   }
 
   if (ntp.task_handle) {
-    // Wait for task to finish
-    for (int i = 0; i < 20 && ntp.task_handle != NULL; i++) {
-      vTaskDelay(pdMS_TO_TICKS(50));
-    }
-    if (ntp.task_handle != NULL) {
+    if (!ntp_wait_for_task_stopped(20)) {
       ESP_LOGW(TAG, "NTP task did not exit within timeout");
     }
   }

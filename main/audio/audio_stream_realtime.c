@@ -275,6 +275,7 @@ static bool realtime_receive_packet(audio_stream_t *stream, uint8_t *packet,
                          (struct sockaddr *)src_addr, addr_len);
   if (len < 0) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      resend_retry_if_due(state);
       return true;
     }
     if (stream->running) {
@@ -317,6 +318,7 @@ static bool realtime_receive_packet(audio_stream_t *stream, uint8_t *packet,
       ESP_LOGD(TAG, "Dropping stale retransmit seq=%u", seq);
       return true;
     }
+    resend_retry_if_due(state);
   } else if (!track_regular_rtp_sequence(state, seq)) {
     return true;
   } else {
@@ -529,6 +531,10 @@ static esp_err_t realtime_start(audio_stream_t *stream, uint16_t port) {
   if (state->data_socket < 0) {
     return ESP_FAIL;
   }
+  // Keep the receive loop awake so resend_retry_if_due() can repeat NACKs
+  // even when no fresh RTP packets arrive.
+  struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};
+  setsockopt(state->data_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
   state->data_port = bound_port;
 
   if (state->control_port > 0) {
