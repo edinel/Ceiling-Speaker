@@ -1,4 +1,4 @@
-# AirPlay 2 Receiver for ESP32
+# Ceiling Speaker — AirPlay 2 Receiver (XIAO ESP32-S3 + PCM5100 + TPA3116D2)
 cmake_minimum_required(VERSION 3.16)
 
 # Read firmware version from version.txt
@@ -18,7 +18,7 @@ if(IDF_VERSION_MAJOR LESS 5 OR (IDF_VERSION_MAJOR EQUAL 5 AND IDF_VERSION_MINOR 
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(airplay2-receiver VERSION ${PROJECT_VER})
+project(ceiling-speaker VERSION ${PROJECT_VER})
 
 include(cmake/fix_usb_device_uac_platformio.cmake)
 

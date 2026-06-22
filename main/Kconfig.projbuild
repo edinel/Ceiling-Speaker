@@ -130,6 +130,19 @@ menu "Airplay ESP Configuration"
         default 1
         help
             Be careful you might not see the access point if you use a channel not allowed in your country.
+
+    config DEFAULT_WIFI_SSID
+        string "Default station WiFi SSID"
+        default ""
+        help
+            If non-empty, written to NVS on first boot when no credentials are stored.
+            Leave empty to require the captive-portal setup flow.
+
+    config DEFAULT_WIFI_PASSWORD
+        string "Default station WiFi password"
+        default ""
+        help
+            Password for DEFAULT_WIFI_SSID. Only used when DEFAULT_WIFI_SSID is non-empty.
     endmenu
 
     menu "Audio Output"
