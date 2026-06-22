@@ -57,6 +57,14 @@ esp_err_t settings_init(void) {
     nvs_close(nvs);
   }
 
+#ifdef CONFIG_DEFAULT_WIFI_SSID
+  if (CONFIG_DEFAULT_WIFI_SSID[0] != '\0' && !settings_has_wifi_credentials()) {
+    ESP_LOGI(TAG, "Seeding WiFi credentials from build-time defaults");
+    settings_set_wifi_credentials(CONFIG_DEFAULT_WIFI_SSID,
+                                  CONFIG_DEFAULT_WIFI_PASSWORD);
+  }
+#endif
+
   return ESP_OK;
 }
 

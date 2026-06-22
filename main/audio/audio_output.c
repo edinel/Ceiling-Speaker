@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "rtsp_server.h"
 #include <inttypes.h>
+#include <math.h>
 #include <stdlib.h>
 
 // SIDE NOTE; providing power from GPIO pins is capped ~20mA.
@@ -76,6 +77,9 @@ static void playback_task(void *arg) {
   }
 
   size_t written;
+  uint32_t frames_since_log = 0;
+  int16_t peak_since_log = 0;
+  TickType_t last_log = xTaskGetTickCount();
   while (playback_running) {
     if (resample_reinit_needed) {
       resample_reinit_needed = false;
@@ -89,6 +93,21 @@ static void playback_task(void *arg) {
     }
     size_t samples = audio_receiver_read(pcm, FRAME_SAMPLES + 1);
     if (samples > 0) {
+      frames_since_log++;
+      for (size_t i = 0; i < samples * 2; i++) {
+        int16_t v = pcm[i] < 0 ? -pcm[i] : pcm[i];
+        if (v > peak_since_log) peak_since_log = v;
+      }
+      TickType_t now = xTaskGetTickCount();
+      if ((now - last_log) >= pdMS_TO_TICKS(1000)) {
+        float db = peak_since_log > 0
+                   ? 20.0f * log10f((float)peak_since_log / 32767.0f)
+                   : -90.0f;
+        ESP_LOGI(TAG, "Audio flowing: %"PRIu32" frames/s, peak %.1f dBFS", frames_since_log, db);
+        frames_since_log = 0;
+        peak_since_log = 0;
+        last_log = now;
+      }
       int16_t *play_buf = pcm;
       size_t play_samples = samples;
       if (audio_resample_is_active()) {

@@ -1,0 +1,25 @@
+# Seeed XIAO ESP32-S3 (ESP32-S3R8: QIO flash + OPI PSRAM)
+# Loaded after sdkconfig.defaults and sdkconfig.defaults.esp32s3.
+# The chip has 8MB OPI PSRAM that must remain enabled — disabling SPIRAM
+# leaves the MSPI bus unconfigured and causes init_flash to assert.
+
+CONFIG_BOARD_ESP32S3_GENERIC=y
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# USB CDC console — XIAO has no USB-to-serial chip
+CONFIG_ESP_CONSOLE_USB_CDC=y
+
+# I2S pins: BCK=GPIO7(D8), DIN=GPIO8(D9), WSEL=GPIO9(D10)
+CONFIG_I2S_SCK_IO=-1
+CONFIG_I2S_BCK_IO=7
+CONFIG_I2S_WS_IO=9
+CONFIG_I2S_DO_IO=8
+
+# Hardware not present on XIAO
+CONFIG_BAT_CHANNEL=-1
+CONFIG_LED_RGB_GPIO=-1
+
+# Dev-time WiFi credentials — seeded to NVS on first boot if NVS is empty
+CONFIG_DEFAULT_WIFI_SSID=""
+CONFIG_DEFAULT_WIFI_PASSWORD=""
