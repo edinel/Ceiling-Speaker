@@ -146,105 +146,123 @@ ESP32 (I2S + I2C) → TLV320DAC3100 (built-in Class D) → W2-2136S speaker
 # Hardware Notes — Bathroom Ceiling Speaker Project
 
 ## Overview
-An ESP32-based AirPlay 2 receiver driving a passive ceiling speaker, powered
+An ESP32-S3-based AirPlay 2 receiver driving a passive ceiling speaker, powered
 entirely from an existing attic light bulb socket. Primary use case: podcast
 listening in the bathroom. All electronics live in the attic above the bathroom.
 
 ## Speaker
-- **Type:** Passive ceiling speaker (150W max rating)
-- **Model:** OSD Audio ICE800TTWRS (or equivalent single passive ceiling speaker)
+- **Model:** OSD Audio ICE800TTWRS 8" dual voice coil ceiling speaker
+- **Note:** Dual voice coil = two pairs of terminals (L+R stereo). Using one pair only for mono.
 - **Location:** Installed in bathroom ceiling, wired up through ceiling to attic
 
 ## Amplifier
 - **Model:** HiLetgo TPA3116D2 Mono 100W
 - **ASIN:** B082F7P184
-- **Chip:** TPA3116D2 (Class D)
+- **Chip:** TPA3116D2 (Class D, BTL output)
 - **Supply voltage:** DC 12–26V
-- **Output:** 100W mono (BTL)
 - **Impedance:** 4–8Ω compatible
+- **BTL warning:** Never ground either OUT+ or OUT− — floating BTL output
 
 ## DAC
-- **Board:** Adafruit PCM5100 I2S DAC (Product #6251) — 100dB SNR
-- **Note:** PCM5102A (#6250) was preferred but out of stock; PCM5100 is functionally
-  identical for this application
-- **No I2C configuration needed** — plug-and-play unlike TLV320DAC3100
+- **Board:** Adafruit PCM5122 I2S DAC (Product #6421)
+- **No I2C configuration needed** — plug-and-play
+- **Line-level output only** — minimum 1kΩ load; cannot drive headphones directly
 
-### PCM5100 DAC Wiring (I2S)
-| PCM5100 Pin | XIAO ESP32C5 silkscreen | GPIO |
+### PCM5122 DAC Wiring (I2S)
+| PCM5122 Pin | XIAO ESP32-S3 silkscreen | GPIO | Notes |
+|---|---|---|---|
+| VIN | 5V (from USB-C breakout) | — | Accepts 3.3–5V |
+| GND | GND | — | — |
+| BCK | D3 | GPIO4 | Bit clock |
+| DIN | D4 | GPIO5 | Data |
+| WSEL | D5 | GPIO6 | Word select |
+| MUTE (XSMT) | 3V3 | — | MUST tie high — failsafe-low pin, floats to muted |
+| FMT | leave floating | — | Defaults to I2S format |
+| MCK | leave unconnected | — | DAC auto-generates from BCK |
+| SCL, SDA | leave unconnected | — | Hardware I2S mode, no I2C needed |
+
+### PCM5122 → TPA3116D2 Analog Wiring
+
+Stereo DAC output summed to mono via two equal resistors before amp input.
+
+| PCM5122 | Via | TPA3116D2 |
 |---|---|---|
-| VCC | 3V3 | — |
-| GND | GND | — |
-| BCK (Bit Clock) | D8 | GPIO8 |
-| LRCK (Word Select) | D9 | GPIO9 |
-| DIN (Data) | D10 | GPIO10 |
-| FMT | GND (tie) | — (selects I2S format) |
-| XMT | 3V3 (tie) | — (unmutes DAC) |
-| SCK | GND (tie) | — (DAC uses internal PLL) |
+| LOUT | 2.2kΩ to summing node | IN+ |
+| ROUT | 2.2kΩ to summing node | IN+ |
+| AGND | direct | IN− (signal ground) |
 
-### PCM5100 → TPA3116D2 Analog Wiring
+- Use LOUT/ROUT pads, not the 3.5mm headphone jack (line-level only anyway)
+- OUT+/OUT− connect directly to one speaker terminal pair (BTL — do not ground either)
 
-Stereo DAC output is summed to mono via two equal resistors before the amp input.
+## Microcontroller
+- **Board:** Seeed Studio XIAO ESP32-S3 (standard, not Sense)
+- **Chip:** ESP32-S3R8 — Xtensa dual-core 240MHz, 8MB QIO flash, 8MB OPI PSRAM
+- **Antenna:** External 2.4GHz antenna via U.FL connector — required for reliable WiFi
+  (PCB trace antenna gives ~-84 dBm at 3 feet; external gives ~-25 dBm)
+- **Bluetooth:** BLE 5.0 only — no Classic Bluetooth, A2DP is impossible on this chip
+- **Power:** USB-C
 
-| PCM5100 | Via | TPA3116D2 |
-| --- | --- | --- |
-| LOUT | 10kΩ to summing node | IN+ |
-| ROUT | 10kΩ to summing node | IN+ |
-| AGND | direct | IN- (signal ground) |
-
-- OUT+ and OUT− on the amp connect directly to the ceiling speaker (BTL output — do not ground either terminal)
-- Use the LOUT/ROUT pads on the PCM5100 board, not the 3.5mm jack
+### XIAO ESP32-S3 Pin Usage
+| Silkscreen | GPIO | Use |
+|---|---|---|
+| D3 | GPIO4 | I2S BCK |
+| D4 | GPIO5 | I2S DIN |
+| D5 | GPIO6 | I2S WSEL |
+| D6 | GPIO43 | USB CDC TX (console) |
+| D7 | GPIO44 | USB CDC RX (console) |
+| GPIO21 | GPIO21 | Onboard amber LED (status) |
+| D0, D1, D2 | GPIO1, 2, 3 | Free |
+| D8, D9, D10 | GPIO7, 8, 9 | Free |
 
 ## Power Chain
 ```
 E26 attic light socket
-  → Light socket to AC outlet adapter (~$8)
+  → Light socket to AC outlet adapter
   → USB-C PD wall wart (65W recommended)
   → USB-C PD trigger board (set to 20V)
-  → TPA3116D2 amp board (via barrel jack)
-  → Also tapped: LM2596 buck converter (20V → 5V)
-  → USB-C breakout board (5V)
-  → Adafruit ESP32 Feather V2 (USB-C powered)
+  → TPA3116D2 amp (via barrel jack)
+  → MPM3610 buck converter (20V → 5V; EN pin MUST tie to VIN)
+  → USB-C breakout (VBUS=5V)
+  → XIAO ESP32-S3 (USB-C)
 ```
 
+- MPM3610 EN pin: tie to VIN — if left floating, converter passes 20V unregulated and kills the MCU
 - Attic light bulb remains functional — outlet adapter passes through to E26 socket
-- LM2596 buck converter: adjust trimmer pot to exactly 5V before connecting ESP32
-- USB-C PD trigger board negotiates 20V from PD charger via PD protocol
 
-## Microcontroller
-- **Board:** Seeed Studio XIAO ESP32C5
-- **Chip:** ESP32-C5 (RISC-V single-core 240MHz), WiFi 6 (802.11ax) dual-band 2.4/5GHz, BT 5.0
-- **5GHz WiFi:** key reason for choosing this over Feather V2 — better penetration through attic structure
-- **Power:** USB-C
+## LED Status (GPIO21 — onboard amber)
+| State | Pattern |
+|---|---|
+| Standby (no client) | Slow blink |
+| Connected / paused | Medium blink |
+| Playing | Solid on |
 
 ## Audio Chain
 ```
-ESP32 (I2S) → PCM5100 DAC → line-level analog → TPA3116D2 amp → ceiling speaker
+XIAO ESP32-S3 (I2S) → PCM5122 DAC → 2×2.2kΩ stereo-to-mono → TPA3116D2 amp → ceiling speaker
 ```
 
 ## Software / Firmware
-- **Framework:** ESP-IDF (NOT Arduino) — the airplay-esp32 library requires ESP-IDF
-- **AirPlay 2:** [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32)
-  - Presents as AirPlay 2 receiver to iPhone/iPad/Mac — appears like a HomePod
-  - Also supports Bluetooth A2DP as fallback
-  - No cloud, no app — configure via web interface
-  - Actively maintained (updated April 2026)
-- **Primary use:** Podcast listening via AirPlay from iPhone/Mac
+- **Framework:** ESP-IDF (NOT Arduino)
+- **Repo:** Ceiling-Speaker (airplay-esp32 merged in)
+- **PlatformIO env:** `xiao-esp32s3` (default_envs set to this)
+- **WiFi credentials:** stored in gitignored `sdkconfig.defaults.secrets` — copy from `sdkconfig.defaults.secrets.example`
+- **Device name / config:** via web UI at device IP address (flash SPIFFS first: `pio run -e xiao-esp32s3 -t uploadfs`)
+- **Home Assistant:** auto-discovers as AirPlay media player under Settings → Devices & Services
 
 ## Attic Environment Notes
 - Electronics are dry (attic, not bathroom) — no moisture concern
 - Attic can get hot in summer — avoid placing enclosure in direct sun path
-- ESP32 and TPA3116D2 rated for elevated temps but worth noting
-- Use twisted wire pairs for signal cables (Class D amp EMI sensitivity)
+- Use twisted wire pairs for signal cables (Class D amp EMI)
 - Keep input signal cables routed away from amp output/switching components
 
 ## Context Notes for Code Generation
-- Both projects use Adafruit ESP32 Feather V2 (#5400)
 - **Bedside:** Arduino framework — ESP32-A2DP + Adafruit_TLV320_I2S
   — TLV320DAC3100 (#6309) requires I2C init — drives speaker directly
-  — powered by plain 5V USB-C — hexagonal birch enclosure — W2-2136S driver
-  — capacitive touch on GPIO4 with 1MΩ pulldown to GND — external LEDs TBD
-- **Ceiling:** ESP-IDF framework — rbouteiller/airplay-esp32 — AirPlay 2 target
-  — PCM5100 (#6251) plug-and-play I2S — feeds TPA3116D2 amp
-  — powered from attic light socket via PD chain — passive ceiling speaker
+  — Adafruit ESP32 Feather V2 (#5400) — powered by plain 5V USB-C
+  — hexagonal birch enclosure — W2-2136S driver
+  — capacitive touch on GPIO4 with 1MΩ pulldown to GND
+- **Ceiling:** ESP-IDF framework — AirPlay 2 only (no BT on S3)
+  — XIAO ESP32-S3 — PCM5122 (#6421) plug-and-play I2S — feeds TPA3116D2 amp
+  — powered from attic light socket via 20V PD chain + MPM3610 buck
+  — passive ceiling speaker (OSD ICE800TTWRS, one voice coil pair used)
 - Neither project requires battery power — both permanently mains-powered
-- I2S pins are software-assigned on ESP32 — any available GPIO can be used
