@@ -20,6 +20,3 @@ CONFIG_I2S_DO_IO=8
 CONFIG_BAT_CHANNEL=-1
 CONFIG_LED_RGB_GPIO=-1
 
-# Dev-time WiFi credentials — seeded to NVS on first boot if NVS is empty
-CONFIG_DEFAULT_WIFI_SSID=""
-CONFIG_DEFAULT_WIFI_PASSWORD=""
